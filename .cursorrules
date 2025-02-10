@@ -1,0 +1,93 @@
+需求：想写一个mac Intel  下的程序，程序支持 调用 openai  ，deepseek  等api，返回结果 通过弹出一个窗口 显示。通过popclip  传入text 参数 调用这个程序 并返回结果。
+细节：
+1. 程序支持 调用 openai  ，deepseek  等api，返回结果 通过弹出一个窗口 显示。
+2. 通过popclip  传入text 参数 调用这个程序 并返回结果。
+3. 程序支持 调用 openai  ，deepseek  等api，返回结果 通过弹出一个窗口 显示。
+4. 通过popclip  传入text 参数 调用这个程序 并返回结果。
+5. 程序支持 调用 openai  ，deepseek  等api，返回结果 通过弹出一个窗口 显示。
+6. 通过popclip  传入text 参数 调用这个程序 并返回结果。
+{
+  "project": "AI-PopClip助手-Intel版",
+  "version": "2.2",
+  "platform": "macOS Intel",
+  
+  "core_modules": {
+    "text_processor": {
+      "input": "PopClip文本参数（UTF-8编码）",
+      "output": "NSWindow弹窗显示",
+      "apis": {
+        "openai": "GPT-3.5/4模型",
+        "deepseek": "深度求索模型"
+      }
+    },
+    
+    "window_system": {
+      "base_view": "NSPanel浮动窗口",
+      "features": [
+        "动态尺寸调节（400x300~800x600）",
+        "Markdown语法高亮",
+        "NSVisualEffectView磨砂背景",
+        "NSScrollView自动滚动"
+      ]
+    }
+  },
+
+  "dependencies": {
+    "required": [
+      "KeychainAccess（密钥存储）",
+      "SwiftyJSON（API响应解析）",
+      "Highlightr（Markdown着色）"
+    ],
+    "build_command": "xcodebuild -arch x86_64"
+  },
+
+  "popclip_integration": {
+    "trigger_flow": [
+      "PopClip传递选中文本 → 命令行参数接收",
+      "NSApplication单例处理请求",
+      "结果通过NSPasteboard回传"
+    ],
+    "config_keys": {
+      "service_type": "AI服务商选择",
+      "api_timeout": "超时时间（默认15秒）",
+      "retry_count": "失败重试次数"
+    }
+  },
+
+  "security": {
+    "keychain_service": "ai.popclip.credentials",
+    "data_encryption": "AES-256-CBC",
+    "sensitive_filters": ["密钥", "授权码", "密码"]
+  },
+
+  "ui_config": {
+    "theme": {
+      "light_mode": "白色基底+灰色边框",
+      "dark_mode": "#2E2E2E底色+蓝绿色高亮"
+    },
+    "animations": [
+      "窗口淡入淡出（0.3秒）", 
+      "文字逐字打印效果",
+      "加载旋转指示器"
+    ]
+  },
+
+  "error_policy": {
+    "network_errors": {
+      "retry_strategy": "指数退避重试",
+      "fallback": "本地缓存历史记录"
+    },
+    "user_alerts": {
+      "quota_exceeded": "NSAlert对话框警告",
+      "invalid_key": "钥匙串访问引导"
+    }
+  },
+
+  "compatibility": {
+    "min_os": "10.15 Catalina",
+    "arch_limits": "仅支持x86_64架构",
+    "deprecation_warnings": [
+      "检测到Apple Silicon时提示性能影响"
+    ]
+  }
+}

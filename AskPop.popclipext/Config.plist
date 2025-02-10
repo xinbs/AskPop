@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Extension Name</key>
+    <string>AskPop</string>
+    <key>Extension Identifier</key>
+    <string>com.example.popclip.extension.askpop</string>
+    <key>Extension Description</key>
+    <string>使用 AI 分析选中的文本</string>
+    <key>Extension Image</key>
+    <string>wand.and.stars.png</string>
+    <key>Required OS Version</key>
+    <string>13.0</string>
+    <key>Required PopClip Version</key>
+    <string>4022</string>
+    <key>Required Architecture</key>
+    <array>
+        <string>x86_64</string>
+        <string>arm64</string>
+    </array>
+    <key>Version</key>
+    <string>2.2</string>
+    <key>Options</key>
+    <array>
+        <dict>
+            <key>Identifier</key>
+            <string>qa_prompt</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>问答提示词</string>
+            <key>Default Value</key>
+            <string>你现在是一个百科全书，请用简洁的中文解释这个问题：</string>
+            <key>Description</key>
+            <string>AI 问答功能的提示词</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>translate_prompt</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>翻译提示词</string>
+            <key>Default Value</key>
+            <string>你现在是一位专业的中英互译翻译官。请将内容翻译成相反的语言：如果是中文就翻译成英文，如果是英文就翻译成中文。只需要翻译，不需要解释。待翻译内容是：</string>
+            <key>Description</key>
+            <string>AI 翻译功能的提示词</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>apikey</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>API Key</string>
+            <key>Default Value</key>
+            <string>your-api-key-here</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>api_url</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>API URL</string>
+            <key>Default Value</key>
+            <string>https://api.openai.com/v1/chat/completions</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>model</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>AI 模型</string>
+            <key>Default Value</key>
+            <string>gpt-3.5-turbo</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>temperature</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>温度 (0.0-1.0)</string>
+            <key>Default Value</key>
+            <string>0.7</string>
+        </dict>
+    </array>
+    <key>Actions</key>
+    <array>
+        <dict>
+            <key>Identifier</key>
+            <string>qa_action</string>
+            <key>Title</key>
+            <string>问答</string>
+            <key>Icon</key>
+            <string>symbol:brain.head.profile</string>
+            <key>Shell Script File</key>
+            <string>run.sh</string>
+            <key>Script Interpreter</key>
+            <string>/bin/bash</string>
+            <key>Requirements</key>
+            <array>
+                <string>text</string>
+            </array>
+            <key>Pass HTML</key>
+            <false/>
+            <key>Regular Expression</key>
+            <string>(?s)^.{1,}$</string>
+            <key>Before Text</key>
+            <string>{popclip option qa_prompt}</string>
+            <key>After Text</key>
+            <string></string>
+            <key>Option API Key</key>
+            <string>{popclip option apikey}</string>
+            <key>Option API URL</key>
+            <string>{popclip option api_url}</string>
+            <key>Option Model</key>
+            <string>{popclip option model}</string>
+            <key>Option Temperature</key>
+            <string>{popclip option temperature}</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>translate_action</string>
+            <key>Title</key>
+            <string>翻译</string>
+            <key>Icon</key>
+            <string>iconify:ri:translate</string>
+            <key>Shell Script File</key>
+            <string>run.sh</string>
+            <key>Script Interpreter</key>
+            <string>/bin/bash</string>
+            <key>Requirements</key>
+            <array>
+                <string>text</string>
+            </array>
+            <key>Pass HTML</key>
+            <false/>
+            <key>Regular Expression</key>
+            <string>(?s)^.{1,}$</string>
+            <key>Before Text</key>
+            <string>{popclip option translate_prompt}</string>
+            <key>After Text</key>
+            <string></string>
+            <key>Option API Key</key>
+            <string>{popclip option apikey}</string>
+            <key>Option API URL</key>
+            <string>{popclip option api_url}</string>
+            <key>Option Model</key>
+            <string>{popclip option model}</string>
+            <key>Option Temperature</key>
+            <string>{popclip option temperature}</string>
+        </dict>
+    </array>
+</dict>
+</plist>
