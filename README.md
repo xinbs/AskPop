@@ -2,7 +2,7 @@
 
 AskPop 是一个 PopClip 扩展，让你可以快速使用 AI 功能处理选中的文本。支持问答和翻译功能，可以配置使用不同的 AI 服务商。
 
-![AskPop 界面](screenshots/askpop.png)
+![AskPop 界面](./askpop.png)
 
 ## 功能特点
 
@@ -14,7 +14,7 @@ AskPop 是一个 PopClip 扩展，让你可以快速使用 AI 功能处理选中
 - 🎨 **优雅界面**：简洁美观的浮动窗口
 - ⚙️ **灵活配置**：支持自定义 API、模型和参数
 
-![工具栏图标](screenshots/toolbar.png)
+![工具栏图标](./toolbar.png)
 
 ## 安装要求
 
