@@ -24,9 +24,13 @@ AskPop 是一个 PopClip 扩展，让你可以快速使用 AI 功能处理选中
 
 ## 快速开始
 
-1. 下载并双击 `AskPop.popclipext` 安装扩展
-2. 在 PopClip 设置中配置 API Key 和其他选项
-3. 选中文本，点击工具栏图标即可使用
+1. 下载 [AskPop.zip](https://github.com/xinbs/AskPop/raw/main/AskPop.zip) 并解压
+2. 双击 `AskPop.popclipext` 安装扩展
+3. 在 PopClip 设置中配置 API Key 和其他选项
+4. 用编辑器打开rewrite.grammar.js，鼠标从顶部往下拉，选中所有文本，Popclip 会提示安装
+![AskPop_Rewriting_Assistant](./AskPop_Rewriting_Assistant.png)
+5. 在 PopClip 设置中配置 API Key 和其他选项
+6. 选中文本，点击工具栏图标即可使用
 
 ## 配置说明
 

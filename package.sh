@@ -35,8 +35,13 @@ if [ $? -eq 0 ]; then
     chmod +x "$EXTENSION_DIR/AskPop"
     chmod 644 "$EXTENSION_DIR/Config.plist"
     
+    # 创建发布包
+    echo "创建发布包..."
+    zip -r AskPop.zip "$EXTENSION_DIR" Extension/rewrite.grammar.js
+    
     echo "打包完成！"
     echo "扩展目录：$EXTENSION_DIR"
+    echo "发布包：AskPop.zip"
 else
     echo "编译失败"
     exit 1
