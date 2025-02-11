@@ -121,27 +121,35 @@ grammar: {
 - Intel 处理器的 Mac
 - PopClip 已安装
 
-## 安装步骤
+## 开发者安装
+
+如果你想自己编译和开发这个扩展：
 
 1. 克隆此仓库
-2. 运行以下命令编译程序：
    ```bash
-   swift build -c release
+   git clone https://github.com/xinbs/AskPop.git
+   cd AskPop
    ```
-3. 将编译好的程序复制到合适的位置：
-   ```bash
-   cp .build/release/PopClipAITool ./
-   ```
-4. 设置 API 密钥：
-   - 打开 "钥匙串访问"
-   - 添加一个新密钥，服务名为 "ai.popclip.credentials"
-   - 账户名为 "openai_key"
-   - 密码为你的 OpenAI API 密钥
 
-5. 安装 PopClip 扩展：
-   - 压缩 Extension 文件夹
-   - 将压缩文件重命名为 "AIAssistant.popclipext"
-   - 双击打开，PopClip 会自动安装扩展
+2. 运行打包脚本
+   ```bash
+   ./package.sh
+   ```
+
+3. 打包脚本会：
+   - 编译 Swift 源代码
+   - 创建 PopClip 扩展
+   - 生成发布包 AskPop.zip
+
+4. 开发建议：
+   - 修改 Config.plist 配置扩展选项
+   - 编辑 rewrite.grammar.js 调整改写功能
+   - 更新 main.swift 开发新功能
+
+5. 调试方法：
+   - 查看日志: `/tmp/popclip_ai_tool.log`
+   - 使用 `print()` 输出调试信息
+   - 在 PopClip 设置中启用调试模式
 
 ## 注意事项
 

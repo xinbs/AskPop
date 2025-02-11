@@ -1,5 +1,5 @@
 // #popclip extension
-// name: AskPop改写助手
+// name: AskPop Rewrite Assistant
 // language: javascript
 // module: true
 // entitlements: [network]
@@ -12,13 +12,19 @@
 //   identifier: baseurl,
 //   label: API Base URL,
 //   type: string,
-//   description: 'API 基础 URL',
+//   description: '支持 OpenAI/DeepSeek 等API接口，示例：
+// https://api.openai.com/v1/
+//  
+// https://api.deepseek.com/v1/',
 //   default: 'https://api.openai.com/v1/'
 // }, {
 //   identifier: model,
 //   label: AI Model,
 //   type: string,
-//   description: '选择使用的 AI 模型',
+//   description: '选择使用的 AI 模型，示例：
+// OpenAI: gpt-3.5-turbo, gpt-4
+//  
+// DeepSeek: deepseek-chat, deepseek-coder',
 //   default: 'gpt-3.5-turbo'
 // }]
 
