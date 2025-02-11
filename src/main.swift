@@ -785,7 +785,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                     
                     const nameSpan = document.createElement('span');
                     nameSpan.className = role === 'user' ? 'user-name' : 'ai-name';
-                    nameSpan.textContent = role === 'user' ? '你' : 'qwen-max-0125';
+                    nameSpan.textContent = role === 'user' ? '你' : (model || 'AI助手');
                     
                     const timeSpan = document.createElement('span');
                     timeSpan.className = 'timestamp';
@@ -961,9 +961,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         // 只有当最后一条消息是 AI 回复时才替换
         let script = """
             if (document.querySelector('.message:last-child')?.getAttribute('data-role') === 'assistant') {
-                appendMessage('\(lastMessage["role"] ?? "")', `\(lastMessage["content"]?.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`") ?? "")`, true);
+                appendMessage('\(lastMessage["role"] ?? "")', `\(lastMessage["content"]?.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`") ?? "")`, true, '\(model)');
             } else {
-                appendMessage('\(lastMessage["role"] ?? "")', `\(lastMessage["content"]?.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`") ?? "")`, false);
+                appendMessage('\(lastMessage["role"] ?? "")', `\(lastMessage["content"]?.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`") ?? "")`, false, '\(model)');
             }
         """
         print("执行 JavaScript: \(script)")
