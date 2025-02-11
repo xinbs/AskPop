@@ -120,6 +120,8 @@ grammar: {
 - macOS 10.15 或更高版本
 - Intel 处理器的 Mac
 - PopClip 已安装
+- 如果是M系列芯片请重新编译，运行./package.sh
+
 
 ## 开发者安装
 
