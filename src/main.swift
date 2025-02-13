@@ -553,10 +553,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 }
                 .message {
                     margin-bottom: 12px;
+                    display: inline-block;  /* 让消息框宽度自适应内容 */
+                    max-width: 100%;  /* 最大宽度为容器宽度 */
+                    word-wrap: break-word;  /* 允许长单词换行 */
+                    white-space: pre-wrap;  /* 保留换行和空格，同时允许自动换行 */
                 }
                 .message-header {
                     margin-bottom: 4px;
-                    font-size: 13px;
                 }
                 .user-name {
                     color: #0066cc;
@@ -573,6 +576,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 }
                 .message-content {
                     font-size: 14px;
+                    word-wrap: break-word;
+                    white-space: normal;  /* 使用正常的换行 */
                 }
                 .code-block-wrapper {
                     position: relative;
@@ -655,6 +660,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                     background-color: rgba(0, 102, 204, 0.1);
                     align-self: flex-start;
                     width: calc(100% - 12px);  /* 减去右侧空间 */
+                    white-space: normal;  /* 使用正常的换行 */
                 }
                 
                 /* AI 消息样式 */
@@ -662,6 +668,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                     background-color: rgba(40, 167, 69, 0.1);
                     align-self: flex-start;
                     width: calc(100% - 12px);  /* 减去右侧空间 */
+                    white-space: normal;  /* 使用正常的换行 */
                 }
                 
                 /* 统一消息样式 */
@@ -669,6 +676,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                     margin-left: 0;  /* 确保左对齐 */
                     margin-right: auto;  /* 允许右边有空间 */
                     padding: 8px 12px;  /* 消息内部的内边距 */
+                    word-wrap: break-word;  /* 允许长单词换行 */
+                }
+                
+                .message-content {
+                    font-size: 14px;
+                    white-space: normal;  /* 使用正常的换行 */
+                    word-wrap: break-word;  /* 允许长单词换行 */
                 }
                 
                 /* 确保代码块背景不受消息背景影响 */
