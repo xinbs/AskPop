@@ -313,7 +313,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         
         // 从命令行参数获取提示词和文本
         let prompt = CommandLine.arguments[1]
-        let text = CommandLine.arguments[2]
+        let encodedText = CommandLine.arguments[2]
+        let text: String
+        if encodedText.hasPrefix("base64:") {
+            let base64String = String(encodedText.dropFirst(7))
+            if let data = Data(base64Encoded: base64String),
+               let decodedText = String(data: data, encoding: .utf8) {
+                text = decodedText
+                print("成功解码 base64 文本")
+            } else {
+                print("错误：无法解码 base64 文本")
+                exit(1)
+            }
+        } else {
+            text = encodedText
+        }
+        
         systemPrompt = prompt  // 保存系统提示词
         print("接收到的提示词: \(prompt)")
         print("接收到的文本: \(text)")

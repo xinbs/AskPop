@@ -49,8 +49,11 @@ fi
 log "提示词: $PROMPT"
 log "用户文本: $POPCLIP_TEXT"
 
+# 使用 base64 编码来保留所有格式
+ESCAPED_TEXT=$(echo -n "$POPCLIP_TEXT" | base64)
+
 # 在后台运行 AI 助手程序，并立即返回
-nohup "$AI_TOOL" "$PROMPT" "$POPCLIP_TEXT" >> "$LOG_FILE" 2>&1 &
+nohup "$AI_TOOL" "$PROMPT" "base64:$ESCAPED_TEXT" >> "$LOG_FILE" 2>&1 &
 
 # 记录后台进程 ID
 PID=$!
