@@ -15,9 +15,15 @@ log() {
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 log "脚本目录: $SCRIPT_DIR"
 
+# 获取 PopClip 传递的文本
+TEXT="$POPCLIP_TEXT"
+
+# 获取 PopClip 动作标识符
+ACTION_ID="$POPCLIP_ACTION_IDENTIFIER"
+
 # 记录日志
-log "PopClip 文本: $POPCLIP_TEXT"
-log "PopClip Action ID: $POPCLIP_ACTION_IDENTIFIER"
+log "PopClip 文本: $TEXT"
+log "PopClip Action ID: $ACTION_ID"
 
 # 检查可执行文件是否存在
 AI_TOOL="$SCRIPT_DIR/AskPop"
@@ -34,23 +40,26 @@ if [ ! -x "$AI_TOOL" ]; then
 fi
     
 # 根据 Action ID 选择提示词
-if [ "$POPCLIP_ACTION_IDENTIFIER" = "qa_action" ]; then
-    PROMPT="${POPCLIP_OPTION_QA_PROMPT}"
+if [ "$ACTION_ID" = "qa_action" ]; then
+    PROMPT="$POPCLIP_OPTION_QA_PROMPT"
     log "使用问答提示词"
-elif [ "$POPCLIP_ACTION_IDENTIFIER" = "translate_action" ]; then
-    PROMPT="${POPCLIP_OPTION_TRANSLATE_PROMPT}"
+elif [ "$ACTION_ID" = "translate_action" ]; then
+    PROMPT="$POPCLIP_OPTION_TRANSLATE_PROMPT"
     log "使用翻译提示词"
+elif [ "$ACTION_ID" = "note_action" ]; then
+    PROMPT="$POPCLIP_OPTION_NOTE_PROMPT"
+    log "使用笔记提示词"
 else
-    PROMPT="${POPCLIP_BEFORE_TEXT}"
+    PROMPT="$POPCLIP_BEFORE_TEXT"
     log "使用默认提示词"
 fi
-
+    
 # 记录最终结果
 log "提示词: $PROMPT"
-log "用户文本: $POPCLIP_TEXT"
+log "用户文本: $TEXT"
 
 # 使用 base64 编码来保留所有格式
-ESCAPED_TEXT=$(echo -n "$POPCLIP_TEXT" | base64)
+ESCAPED_TEXT=$(echo -n "$TEXT" | base64)
 
 # 在后台运行 AI 助手程序，并立即返回
 nohup "$AI_TOOL" "$PROMPT" "base64:$ESCAPED_TEXT" >> "$LOG_FILE" 2>&1 &

@@ -25,6 +25,23 @@
     <array>
         <dict>
             <key>Identifier</key>
+            <string>note_prompt</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>笔记提示词</string>
+            <key>Default Value</key>
+            <string>你是一个专业的笔记助手。请帮我将以下文本整理成Markdown格式的笔记，要求:
+1. 根据内容生成合适的标题，默认作为二级标题
+2. 优化文本格式和结构
+3. 添加适当的Markdown语法
+4. 保持原文的关键信息
+请直接返回处理后的Markdown内容，文本开头不用添加```markdown 标记，不要添加任何其他解释。</string>
+            <key>Description</key>
+            <string>AI 笔记功能的提示词</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
             <string>qa_prompt</string>
             <key>Type</key>
             <string>string</string>
@@ -90,6 +107,38 @@
     </array>
     <key>Actions</key>
     <array>
+        <dict>
+            <key>Identifier</key>
+            <string>note_action</string>
+            <key>Icon</key>
+            <string>symbol:note.text</string>
+            <key>Title</key>
+            <string>记笔记</string>
+            <key>Shell Script File</key>
+            <string>run.sh</string>
+            <key>Script Interpreter</key>
+            <string>/bin/bash</string>
+            <key>Requirements</key>
+            <array>
+                <string>text</string>
+            </array>
+            <key>Pass HTML</key>
+            <false/>
+            <key>Regular Expression</key>
+            <string>(?s)^.{1,}$</string>
+            <key>Before Text</key>
+            <string>{popclip option note_prompt}</string>
+            <key>After Text</key>
+            <string></string>
+            <key>Option API Key</key>
+            <string>{popclip option apikey}</string>
+            <key>Option API URL</key>
+            <string>{popclip option api_url}</string>
+            <key>Option Model</key>
+            <string>{popclip option model}</string>
+            <key>Option Temperature</key>
+            <string>{popclip option temperature}</string>
+        </dict>
         <dict>
             <key>Identifier</key>
             <string>qa_action</string>

@@ -2,6 +2,7 @@ import Cocoa
 import KeychainAccess
 import SwiftyJSON
 import WebKit
+import UniformTypeIdentifiers
 
 class EditableTextField: NSTextField {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -43,12 +44,523 @@ class EditableTextField: NSTextField {
     }
 }
 
+// 添加 HoverableButton 类作为全局类
+class HoverableButton: NSButton {
+    var hoverHandler: ((Bool) -> Void)?
+    var tooltipHandler: ((Bool) -> Void)?
+    private var tooltipPanel: NSPanel?
+    private var feedbackPanel: NSPanel?
+    private var hoverTimer: Timer?
+    
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .enabledDuringMouseDrag],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        hoverHandler?(true)
+        hoverTimer?.invalidate()
+        
+        if feedbackPanel == nil {
+            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                if let tooltip = self?.toolTip {
+                    self?.showTooltip(tooltip)
+                }
+            }
+        }
+    }
+    
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        hoverHandler?(false)
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        hideTooltip()
+    }
+    
+    private func showTooltip(_ text: String) {
+        let feedback = NSTextField(frame: .zero)
+        feedback.stringValue = text
+        feedback.isEditable = false
+        feedback.isBordered = false
+        feedback.backgroundColor = NSColor.clear
+        feedback.drawsBackground = false
+        feedback.textColor = NSColor.secondaryLabelColor
+        feedback.alignment = .center
+        feedback.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        
+        let size = text.size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)])
+        let padding: CGFloat = 16
+        let width = size.width + padding
+        let height: CGFloat = 22
+        
+        let buttonFrame = self.window?.convertToScreen(self.convert(self.bounds, to: nil)) ?? .zero
+        
+        let panelFrame = NSRect(
+            x: buttonFrame.origin.x + (buttonFrame.width - width) / 2,
+            y: buttonFrame.origin.y - height - 4,
+            width: width,
+            height: height
+        )
+        
+        let panel = NSPanel(
+            contentRect: panelFrame,
+            styleMask: [.nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.isMovable = false
+        
+        feedback.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        panel.contentView?.addSubview(feedback)
+        
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.orderFront(nil)
+        
+        tooltipPanel = panel
+    }
+    
+    private func hideTooltip() {
+        tooltipPanel?.close()
+        tooltipPanel = nil
+    }
+    
+    func showFeedback(_ text: String) {
+        hideTooltip()
+        feedbackPanel?.close()
+        feedbackPanel = nil
+        
+        let feedback = NSTextField(frame: .zero)
+        feedback.stringValue = text
+        feedback.isEditable = false
+        feedback.isBordered = false
+        feedback.backgroundColor = .clear
+        feedback.drawsBackground = false
+        feedback.textColor = NSColor.secondaryLabelColor
+        feedback.alignment = .center
+        feedback.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        
+        let size = text.size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)])
+        let padding: CGFloat = 16
+        let width = size.width + padding
+        let height: CGFloat = 22
+        
+        feedback.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        
+        let buttonFrame = self.window?.convertToScreen(self.convert(self.bounds, to: nil)) ?? .zero
+        
+        let panelFrame = NSRect(
+            x: buttonFrame.origin.x + (buttonFrame.width - width) / 2,
+            y: buttonFrame.origin.y - height - 4,
+            width: width,
+            height: height
+        )
+        
+        let panel = NSPanel(
+            contentRect: panelFrame,
+            styleMask: [.nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.isMovable = false
+        
+        feedback.translatesAutoresizingMaskIntoConstraints = false
+        panel.contentView?.addSubview(feedback)
+        
+        if let contentView = panel.contentView {
+            NSLayoutConstraint.activate([
+                feedback.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+                feedback.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+                feedback.widthAnchor.constraint(equalToConstant: width),
+                feedback.heightAnchor.constraint(equalToConstant: height)
+            ])
+        }
+        
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.orderFront(nil)
+        
+        feedbackPanel = panel
+        
+        NSObject.cancelPreviousPerformRequests(withTarget: self)
+        perform(#selector(hideFeedback), with: nil, afterDelay: 1.5)
+    }
+    
+    @objc private func hideFeedback() {
+        feedbackPanel?.close()
+        feedbackPanel = nil
+    }
+    
+    deinit {
+        hoverTimer?.invalidate()
+        hideTooltip()
+        NSObject.cancelPreviousPerformRequests(withTarget: self)
+        feedbackPanel?.close()
+    }
+}
+
 class ScriptMessageHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ userController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "copyText", let text = message.body as? String {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
         }
+    }
+}
+
+// 添加笔记设置结构体
+struct NoteSettings: Codable {
+    var defaultNotePath: String
+    var lastSelectedNote: String
+    
+    static let defaultSettings = NoteSettings(defaultNotePath: "", lastSelectedNote: "")
+}
+
+// 添加笔记管理器类
+class NoteManager {
+    static let shared = NoteManager()
+    private let settingsURL: URL
+    private var settings: NoteSettings
+    
+    private init() {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appFolder = appSupport.appendingPathComponent("AskPop")
+        
+        // 创建应用程序文件夹
+        try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true)
+        
+        settingsURL = appFolder.appendingPathComponent("note_settings.json")
+        
+        if let data = try? Data(contentsOf: settingsURL),
+           let loadedSettings = try? JSONDecoder().decode(NoteSettings.self, from: data) {
+            settings = loadedSettings
+        } else {
+            settings = .defaultSettings
+        }
+    }
+    
+    func saveSettings() {
+        try? JSONEncoder().encode(settings).write(to: settingsURL)
+    }
+    
+    var defaultNotePath: String {
+        get { settings.defaultNotePath }
+        set {
+            settings.defaultNotePath = newValue
+            saveSettings()
+        }
+    }
+    
+    var lastSelectedNote: String {
+        get { settings.lastSelectedNote }
+        set {
+            settings.lastSelectedNote = newValue
+            saveSettings()
+        }
+    }
+}
+
+// 添加笔记窗口控制器类
+class NoteWindowController: NSWindowController {
+    var defaultPathButton: NSButton!
+    var newNoteButton: NSButton!
+    var selectNoteButton: NSButton!
+    var saveButton: NSButton!
+    var currentNoteLabel: NSTextField!
+    var contentTextView: NSTextView!
+    
+    var aiContent: String = "" {
+        didSet {
+            contentTextView.string = aiContent
+        }
+    }
+    
+    convenience init() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        // 设置窗口在主屏幕中心位置
+        if let screen = NSScreen.main {
+            let screenFrame = screen.visibleFrame
+            let windowFrame = window.frame
+            let x = screenFrame.origin.x + (screenFrame.width - windowFrame.width) / 2
+            let y = screenFrame.origin.y + (screenFrame.height - windowFrame.height) / 2
+            window.setFrameOrigin(NSPoint(x: x, y: y))
+        }
+        
+        window.title = "笔记模式"
+        self.init(window: window)
+        
+        // 设置关闭按钮事件
+        window.standardWindowButton(.closeButton)?.target = NSApplication.shared.delegate
+        window.standardWindowButton(.closeButton)?.action = #selector(AppDelegate.closeWindow)
+        
+        setupUI()
+    }
+    
+    private func setupUI() {
+        guard let window = window else { return }
+        
+        // 创建工具栏
+        let toolbar = NSToolbar(identifier: "NoteToolbar")
+        toolbar.displayMode = .iconAndLabel
+        toolbar.delegate = self
+        window.toolbar = toolbar
+        
+        // 创建内容视图
+        let contentView = NSView(frame: window.contentView!.bounds)
+        contentView.autoresizingMask = [.width, .height]
+        
+        // 创建当前笔记标签
+        currentNoteLabel = NSTextField(frame: NSRect(x: 20, y: window.contentView!.bounds.height - 40, width: window.contentView!.bounds.width - 40, height: 20))
+        currentNoteLabel.isEditable = false
+        currentNoteLabel.isBordered = false
+        currentNoteLabel.backgroundColor = .clear
+        currentNoteLabel.stringValue = "当前笔记：\(NoteManager.shared.lastSelectedNote)"
+        currentNoteLabel.autoresizingMask = [.width, .minYMargin]
+        contentView.addSubview(currentNoteLabel)
+        
+        // 创建内容文本视图
+        let scrollView = NSScrollView(frame: NSRect(x: 20, y: 20, width: window.contentView!.bounds.width - 40, height: window.contentView!.bounds.height - 80))
+        scrollView.autoresizingMask = [.width, .height]
+        
+        contentTextView = NSTextView(frame: scrollView.bounds)
+        contentTextView.autoresizingMask = [.width, .height]
+        contentTextView.isEditable = true
+        contentTextView.font = NSFont.systemFont(ofSize: 14)
+        
+        scrollView.documentView = contentTextView
+        scrollView.hasVerticalScroller = true
+        
+        contentView.addSubview(scrollView)
+        
+        window.contentView = contentView
+    }
+    
+    func updateCurrentNoteLabel() {
+        currentNoteLabel.stringValue = "当前笔记：\(NoteManager.shared.lastSelectedNote)"
+    }
+    
+    @objc func selectDefaultPath() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        
+        panel.beginSheetModal(for: window!) { response in
+            if response == .OK {
+                if let url = panel.url {
+                    NoteManager.shared.defaultNotePath = url.path
+                }
+            }
+        }
+    }
+    
+    @objc func createNewNote() {
+        let panel = NSSavePanel()
+        if #available(macOS 12.0, *) {
+            panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
+        } else {
+            panel.allowedFileTypes = ["md"]
+        }
+        panel.nameFieldStringValue = "新笔记.md"
+        
+        if !NoteManager.shared.defaultNotePath.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: NoteManager.shared.defaultNotePath)
+        }
+        
+        panel.beginSheetModal(for: window!) { response in
+            if response == .OK {
+                if let url = panel.url {
+                    try? "# 新笔记\n\n".write(to: url, atomically: true, encoding: .utf8)
+                    NoteManager.shared.lastSelectedNote = url.path
+                    self.updateCurrentNoteLabel()
+                }
+            }
+        }
+    }
+    
+    @objc func selectNote() {
+        let panel = NSOpenPanel()
+        if #available(macOS 12.0, *) {
+            panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
+        } else {
+            panel.allowedFileTypes = ["md"]
+        }
+        panel.allowsMultipleSelection = false
+        
+        if !NoteManager.shared.defaultNotePath.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: NoteManager.shared.defaultNotePath)
+        }
+        
+        panel.beginSheetModal(for: window!) { response in
+            if response == .OK {
+                if let url = panel.url {
+                    NoteManager.shared.lastSelectedNote = url.path
+                    self.updateCurrentNoteLabel()
+                }
+            }
+        }
+    }
+    
+    @objc func saveContent() {
+        guard !NoteManager.shared.lastSelectedNote.isEmpty else {
+            if let saveButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveContent" })?.view as? HoverableButton {
+                saveButton.showFeedback("请先选择笔记")
+            }
+            return
+        }
+        
+        let url = URL(fileURLWithPath: NoteManager.shared.lastSelectedNote)
+        var existingContent = ""
+        
+        // 读取现有内容
+        do {
+            existingContent = try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            print("无法读取现有内容：\(error)")
+        }
+        
+        // 在文件末尾添加新内容
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let timestamp = dateFormatter.string(from: Date())
+        
+        // 获取内容的第一行作为标题
+        let contentLines = contentTextView.string.components(separatedBy: .newlines)
+        let firstLine = contentLines.first ?? "新笔记"
+        
+        // 构建新内容，保持原始标题的 Markdown 格式，只在后面添加时间戳
+        let contentWithoutTitle = contentLines.count > 1 ? 
+            contentLines[1...].joined(separator: "\n") : ""
+        
+        let newContent = """
+        \(existingContent)
+        
+        \(firstLine) - \(timestamp)
+        
+        \(contentWithoutTitle)
+        
+        ---
+        
+        """
+        
+        do {
+            try newContent.write(to: url, atomically: true, encoding: .utf8)
+            if let saveButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveContent" })?.view as? HoverableButton {
+                saveButton.showFeedback("保存成功")
+            }
+        } catch {
+            if let saveButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveContent" })?.view as? HoverableButton {
+                saveButton.showFeedback("保存失败")
+            }
+            print("保存失败：\(error.localizedDescription)")
+        }
+    }
+}
+
+// 添加工具栏代理
+extension NoteWindowController: NSToolbarDelegate {
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        
+        switch itemIdentifier.rawValue {
+        case "defaultPath":
+            item.label = "set"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(selectDefaultPath)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            item.view = button
+            
+        case "newNote":
+            item.label = "new"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(createNewNote)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            item.view = button
+            
+        case "selectNote":
+            item.label = "select"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(selectNote)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            item.view = button
+            
+        case "saveContent":
+            item.label = "save"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(saveContent)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            item.view = button
+            
+        default:
+            return nil
+        }
+        
+        return item
+    }
+    
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        return [
+            NSToolbarItem.Identifier("defaultPath"),
+            NSToolbarItem.Identifier("newNote"),
+            NSToolbarItem.Identifier("selectNote"),
+            NSToolbarItem.Identifier("saveContent"),
+            .flexibleSpace
+        ]
+    }
+    
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        return toolbarDefaultItemIdentifiers(toolbar)
     }
 }
 
@@ -72,195 +584,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     // API 请求任务
     var currentTask: Task<Void, Never>?
     
-    // 添加 NSTrackingArea 代理
-    class HoverableButton: NSButton {
-        var hoverHandler: ((Bool) -> Void)?
-        var tooltipHandler: ((Bool) -> Void)?
-        private var tooltipPanel: NSPanel?
-        private var feedbackPanel: NSPanel?
-        private var hoverTimer: Timer?
-        
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingAreas.forEach { removeTrackingArea($0) }
-            let trackingArea = NSTrackingArea(
-                rect: bounds,
-                options: [.mouseEnteredAndExited, .activeAlways, .enabledDuringMouseDrag],
-                owner: self,
-                userInfo: nil
-            )
-            addTrackingArea(trackingArea)
-        }
-        
-        override func mouseEntered(with event: NSEvent) {
-            super.mouseEntered(with: event)
-            hoverHandler?(true)
-            hoverTimer?.invalidate()
-            
-            if feedbackPanel == nil {
-                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-                    if let tooltip = self?.toolTip {
-                        self?.showTooltip(tooltip)
-                    }
-                }
-            }
-        }
-        
-        override func mouseExited(with event: NSEvent) {
-            super.mouseExited(with: event)
-            hoverHandler?(false)
-            hoverTimer?.invalidate()
-            hoverTimer = nil
-            hideTooltip()
-        }
-        
-        private func showTooltip(_ text: String) {
-            let feedback = NSTextField(frame: .zero)
-            feedback.stringValue = text
-            feedback.isEditable = false
-            feedback.isBordered = false
-            feedback.backgroundColor = NSColor.clear
-            feedback.drawsBackground = false
-            feedback.textColor = NSColor.secondaryLabelColor
-            feedback.alignment = .center
-            feedback.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-            
-            // 根据文字内容调整宽度
-            let size = text.size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)])
-            let padding: CGFloat = 16
-            let width = size.width + padding
-            let height: CGFloat = 22
-            
-            // 获取按钮在屏幕中的位置
-            let buttonFrame = self.window?.convertToScreen(self.convert(self.bounds, to: nil)) ?? .zero
-            
-            // 调整位置，使其在按钮正下方居中
-            let panelFrame = NSRect(
-                x: buttonFrame.origin.x + (buttonFrame.width - width) / 2,
-                y: buttonFrame.origin.y - height - 4,
-                width: width,
-                height: height
-            )
-            
-            let panel = NSPanel(
-                contentRect: panelFrame,
-                styleMask: [.nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            
-            panel.backgroundColor = .clear
-            panel.isOpaque = false
-            panel.hasShadow = false
-            panel.isMovable = false
-            
-            feedback.frame = NSRect(x: 0, y: 0, width: width, height: height)
-            panel.contentView?.addSubview(feedback)
-            
-            panel.isFloatingPanel = true
-            panel.level = .popUpMenu
-            panel.orderFront(nil)
-            
-            // 保存面板引用以便后续关闭
-            tooltipPanel = panel
-        }
-        
-        private func hideTooltip() {
-            tooltipPanel?.close()
-            tooltipPanel = nil
-        }
-        
-        func showFeedback(_ text: String) {
-            // 隐藏悬停提示
-            hideTooltip()
-            
-            // 关闭现有的反馈面板
-            feedbackPanel?.close()
-            feedbackPanel = nil
-            
-            let feedback = NSTextField(frame: .zero)
-            feedback.stringValue = text
-            feedback.isEditable = false
-            feedback.isBordered = false
-            feedback.backgroundColor = .clear
-            feedback.drawsBackground = false
-            feedback.textColor = NSColor.secondaryLabelColor
-            feedback.alignment = .center
-            feedback.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-            
-            // 根据文字内容调整宽度
-            let size = text.size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)])
-            let padding: CGFloat = 16
-            let width = size.width + padding
-            let height: CGFloat = 22
-            
-            // 设置反馈框的大小
-            feedback.frame = NSRect(x: 0, y: 0, width: width, height: height)
-            
-            // 获取按钮在屏幕中的位置
-            let buttonFrame = self.window?.convertToScreen(self.convert(self.bounds, to: nil)) ?? .zero
-            
-            // 调整位置，使其在按钮正下方居中
-            let panelFrame = NSRect(
-                x: buttonFrame.origin.x + (buttonFrame.width - width) / 2,
-                y: buttonFrame.origin.y - height - 4,
-                width: width,
-                height: height
-            )
-            
-            // 创建临时窗口显示反馈
-            let panel = NSPanel(
-                contentRect: panelFrame,
-                styleMask: [.nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            
-            // 设置面板样式
-            panel.backgroundColor = .clear
-            panel.isOpaque = false
-            panel.hasShadow = false
-            panel.isMovable = false
-            
-            // 使用自动布局确保文本框在面板中完全居中
-            feedback.translatesAutoresizingMaskIntoConstraints = false
-            panel.contentView?.addSubview(feedback)
-            
-            if let contentView = panel.contentView {
-                NSLayoutConstraint.activate([
-                    feedback.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-                    feedback.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-                    feedback.widthAnchor.constraint(equalToConstant: width),
-                    feedback.heightAnchor.constraint(equalToConstant: height)
-                ])
-            }
-            
-            panel.isFloatingPanel = true
-            panel.level = .popUpMenu
-            panel.orderFront(nil)
-            
-            // 保存反馈面板引用
-            feedbackPanel = panel
-            
-            // 取消之前的延迟关闭任务
-            NSObject.cancelPreviousPerformRequests(withTarget: self)
-            
-            // 1.5秒后关闭
-            perform(#selector(hideFeedback), with: nil, afterDelay: 1.5)
-        }
-        
-        @objc private func hideFeedback() {
-            feedbackPanel?.close()
-            feedbackPanel = nil
-        }
-        
-        deinit {
-            hoverTimer?.invalidate()
-            hideTooltip()
-            NSObject.cancelPreviousPerformRequests(withTarget: self)
-            feedbackPanel?.close()
-        }
-    }
+    // 添加笔记窗口控制器的引用
+    var noteWindowController: NoteWindowController?
     
     static func main() {
         print("程序启动...")
@@ -311,6 +636,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("应用程序已启动...")
         
+        // 确保应用程序在前台运行
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        
         // 从命令行参数获取提示词和文本
         let prompt = CommandLine.arguments[1]
         let encodedText = CommandLine.arguments[2]
@@ -334,12 +663,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         print("接收到的文本: \(text)")
         
         if !text.isEmpty {
-            // 初始化消息列表，添加系统提示词
-            messages = [["role": "system", "content": prompt]]
-            messages.append(["role": "user", "content": text])
-            createWindow()
-            // 直接使用文本调用 API
-            callAPI(withPrompt: "", text: text)
+            // 检查是否是笔记模式
+            if let actionId = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"],
+               actionId == "note_action" {
+                // 笔记模式
+                messages = [["role": "system", "content": prompt]]  // 直接使用 PopClip 传入的提示词
+                messages.append(["role": "user", "content": text])
+                
+                // 先创建笔记窗口并保持引用
+                noteWindowController = NoteWindowController()
+                noteWindowController?.showWindow(nil)
+                
+                // 调用 API 获取结果
+                callAPI(withPrompt: "", text: text)
+                
+            } else {
+                // 普通模式
+                messages = [["role": "system", "content": prompt]]
+                messages.append(["role": "user", "content": text])
+                createWindow()
+                callAPI(withPrompt: "", text: text)
+            }
         } else {
             print("错误：没有接收到文本")
             NSApp.terminate(nil)
@@ -357,14 +701,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             defer: false
         )
         
+        // 设置窗口在主屏幕中心位置
+        if let screen = NSScreen.main {
+            let screenFrame = screen.visibleFrame
+            let windowFrame = panel.frame
+            let x = screenFrame.origin.x + (screenFrame.width - windowFrame.width) / 2
+            let y = screenFrame.origin.y + (screenFrame.height - windowFrame.height) / 2
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+        }
+
         //panel.title = "AI 助手"
         panel.titlebarAppearsTransparent = true
         panel.backgroundColor = NSColor.windowBackgroundColor
         panel.isMovableByWindowBackground = true
         panel.center()
-        panel.level = .normal  // 设置初始层级为普通窗口
-        panel.collectionBehavior = []  // 使用空集合作为默认行为
-        panel.hidesOnDeactivate = true  // 默认情况下失去焦点时隐藏
+        panel.level = .floating  // 默认设置为浮动层级
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary]  // 设置窗口行为
+        panel.hidesOnDeactivate = false  // 失去焦点时不隐藏
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
@@ -925,8 +1278,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         // 设置窗口关闭回调
         panel.delegate = self
         self.window = panel
+        
+        // 确保窗口显示在最前面
         panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
+        
+        // 添加标准关闭按钮的事件处理
+        panel.standardWindowButton(.closeButton)?.isHidden = false  // 显示关闭按钮
+        panel.standardWindowButton(.closeButton)?.target = self
+        panel.standardWindowButton(.closeButton)?.action = #selector(closeWindow)
+
+        // 如果是第一次创建窗口，设置为浮动层级
+        if let pinButton = titlebarButtonContainer.arrangedSubviews.first as? HoverableButton {
+            pinButton.contentTintColor = NSColor.systemBlue
+        }
     }
     
     @objc func copyText() {
@@ -1015,15 +1381,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             } catch {
                 if !Task.isCancelled {
                     print("API 调用失败: \(error)")
-                    DispatchQueue.main.async { [weak self] in
-                        guard let webView = self?.webView else { return }
-                        let errorScript = """
-                            const errorDiv = document.createElement('div');
-                            errorDiv.className = 'message';
-                            errorDiv.innerHTML = '<div class="message-header"><span class="ai-name">错误</span></div><div class="message-content" style="color: red;">\(error.localizedDescription)</div>';
-                            document.getElementById('messages').appendChild(errorDiv);
-                        """
-                        webView.evaluateJavaScript(errorScript)
+                    
+                    // 检查是否是笔记模式
+                    let isNoteMode = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "note_action"
+                    
+                    await MainActor.run {
+                        if isNoteMode {
+                            // 在笔记窗口显示错误
+                            if let noteWindow = NSApp.windows
+                                .compactMap({ $0.windowController as? NoteWindowController })
+                                .first {
+                                noteWindow.aiContent = "错误：\(error.localizedDescription)"
+                            }
+                        } else {
+                            // 在聊天窗口显示错误
+                            guard let webView = self.webView else { return }
+                            let errorScript = """
+                                const errorDiv = document.createElement('div');
+                                errorDiv.className = 'message';
+                                errorDiv.innerHTML = '<div class="message-header"><span class="ai-name">错误</span></div><div class="message-content" style="color: red;">\(error.localizedDescription)</div>';
+                                document.getElementById('messages').appendChild(errorDiv);
+                            """
+                            webView.evaluateJavaScript(errorScript)
+                        }
                     }
                 }
             }
@@ -1047,7 +1427,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         
         let requestBody: [String: Any] = [
             "model": model,
-            "messages": messages,  // 使用完整的消息历史
+            "messages": messages,
             "temperature": temperature,
             "stream": true
         ]
@@ -1095,6 +1475,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         
         let aggregator = ResponseAggregator()
         
+        // 检查是否是笔记模式
+        let isNoteMode = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "note_action"
+        
+        // 如果是笔记模式，获取笔记窗口控制器
+        let noteWindowController = isNoteMode ? await MainActor.run {
+            NSApp.windows
+                .compactMap { $0.windowController as? NoteWindowController }
+                .first
+        } : nil
+        
         for try await line in bytes.lines {
             guard line.hasPrefix("data: ") else { continue }
             let jsonString = String(line.dropFirst(6))
@@ -1112,14 +1502,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             let (currentText, shouldUpdate, isFirst) = await aggregator.append(content)
             
             if shouldUpdate {
-                if isFirst {
-                    await MainActor.run { [self] in
-                        self.messages.append(["role": "assistant", "content": currentText])
-                        self.updateLastMessage()
-                    }
-                } else {
-                    await MainActor.run { [self] in
-                        self.messages[self.messages.count - 1]["content"] = currentText
+                await MainActor.run { [self] in
+                    if isNoteMode {
+                        // 笔记模式：更新笔记窗口
+                        noteWindowController?.aiContent = currentText
+                    } else {
+                        // 普通模式：更新聊天窗口
+                        if isFirst {
+                            self.messages.append(["role": "assistant", "content": currentText])
+                        } else {
+                            self.messages[self.messages.count - 1]["content"] = currentText
+                        }
                         self.updateLastMessage()
                     }
                 }
@@ -1177,10 +1570,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 }
 
-// 添加窗口代理方法
+// 修改窗口代理方法
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
+        currentTask?.cancel()  // 取消当前任务
         clearHistory()
-        NSApp.terminate(nil)
+        DispatchQueue.main.async {
+            NSApp.terminate(nil)  // 确保在主线程中终止应用
+        }
     }
 } 
