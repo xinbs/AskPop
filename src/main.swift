@@ -285,6 +285,7 @@ class NoteWindowController: NSWindowController {
     var saveButton: NSButton!
     var currentNoteLabel: NSTextField!
     var contentTextView: NSTextView!
+    var originalText: String = ""  // 存储原始文本
     
     var aiContent: String = "" {
         didSet {
@@ -292,7 +293,7 @@ class NoteWindowController: NSWindowController {
         }
     }
     
-    convenience init() {
+    convenience init(withText text: String = "") {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -316,7 +317,11 @@ class NoteWindowController: NSWindowController {
         window.standardWindowButton(.closeButton)?.target = NSApplication.shared.delegate
         window.standardWindowButton(.closeButton)?.action = #selector(AppDelegate.closeWindow)
         
+        originalText = text  // 保存原始文本
         setupUI()
+        
+        // 显示原始文本
+        contentTextView.string = text
     }
     
     private func setupUI() {
@@ -478,6 +483,33 @@ class NoteWindowController: NSWindowController {
             print("保存失败：\(error.localizedDescription)")
         }
     }
+    
+    @objc func rewriteContent() {
+        guard let appDelegate = NSApplication.shared.delegate as? AppDelegate else { return }
+        
+        // 获取当前文本内容
+        let currentText = contentTextView.string
+        guard !currentText.isEmpty else {
+            if let rewriteButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "rewriteContent" })?.view as? HoverableButton {
+                rewriteButton.showFeedback("请先输入内容")
+            }
+            return
+        }
+        
+        // 调用 AI API 进行改写
+        appDelegate.messages = [["role": "system", "content": appDelegate.systemPrompt]]
+        appDelegate.messages.append(["role": "user", "content": currentText])
+        
+        // 清空内容，准备显示 AI 改写的结果
+        contentTextView.string = ""
+        
+        // 调用 API
+        appDelegate.callAPI(withPrompt: "", text: currentText)
+        
+        if let rewriteButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "rewriteContent" })?.view as? HoverableButton {
+            rewriteButton.showFeedback("正在改写...")
+        }
+    }
 }
 
 // 添加工具栏代理
@@ -542,6 +574,20 @@ extension NoteWindowController: NSToolbarDelegate {
             }
             item.view = button
             
+        case "rewriteContent":
+            item.label = "rewrite"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(rewriteContent)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            item.view = button
+            
         default:
             return nil
         }
@@ -555,6 +601,7 @@ extension NoteWindowController: NSToolbarDelegate {
             NSToolbarItem.Identifier("newNote"),
             NSToolbarItem.Identifier("selectNote"),
             NSToolbarItem.Identifier("saveContent"),
+            NSToolbarItem.Identifier("rewriteContent"),
             .flexibleSpace
         ]
     }
@@ -666,17 +713,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             // 检查是否是笔记模式
             if let actionId = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"],
                actionId == "note_action" {
-                // 笔记模式
-                messages = [["role": "system", "content": prompt]]  // 直接使用 PopClip 传入的提示词
-                messages.append(["role": "user", "content": text])
-                
-                // 先创建笔记窗口并保持引用
-                noteWindowController = NoteWindowController()
+                // 笔记模式：直接显示原文，不调用 AI
+                noteWindowController = NoteWindowController(withText: text)
                 noteWindowController?.showWindow(nil)
-                
-                // 调用 API 获取结果
-                callAPI(withPrompt: "", text: text)
-                
             } else {
                 // 普通模式
                 messages = [["role": "system", "content": prompt]]
