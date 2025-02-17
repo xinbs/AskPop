@@ -337,14 +337,67 @@ class NoteWindowController: NSWindowController {
         let contentView = NSView(frame: window.contentView!.bounds)
         contentView.autoresizingMask = [.width, .height]
         
-        // 创建当前笔记标签
-        currentNoteLabel = NSTextField(frame: NSRect(x: 20, y: window.contentView!.bounds.height - 40, width: window.contentView!.bounds.width - 40, height: 20))
+        // 创建当前笔记标签容器
+        let labelContainer = NSView(frame: NSRect(x: 20, y: window.contentView!.bounds.height - 40, width: window.contentView!.bounds.width - 40, height: 20))
+        labelContainer.autoresizingMask = [.width, .minYMargin]
+        
+        // 创建前缀标签
+        let prefixLabel = NSTextField(frame: NSRect(x: 0, y: 0, width: 70, height: 20))
+        prefixLabel.stringValue = "当前笔记："
+        prefixLabel.isEditable = false
+        prefixLabel.isBordered = false
+        prefixLabel.backgroundColor = .clear
+        prefixLabel.textColor = .secondaryLabelColor
+        prefixLabel.font = NSFont.systemFont(ofSize: 12)
+        labelContainer.addSubview(prefixLabel)
+        
+        // 创建当前笔记路径标签
+        currentNoteLabel = NSTextField(frame: NSRect(x: 70, y: 0, width: labelContainer.frame.width - 70, height: 20))
         currentNoteLabel.isEditable = false
         currentNoteLabel.isBordered = false
         currentNoteLabel.backgroundColor = .clear
-        currentNoteLabel.stringValue = "当前笔记：\(NoteManager.shared.lastSelectedNote)"
-        currentNoteLabel.autoresizingMask = [.width, .minYMargin]
-        contentView.addSubview(currentNoteLabel)
+        currentNoteLabel.cell?.truncatesLastVisibleLine = true
+        currentNoteLabel.cell?.lineBreakMode = .byTruncatingMiddle  // 在中间使用省略号
+        currentNoteLabel.font = NSFont.systemFont(ofSize: 12)
+        
+        // 添加鼠标跟踪区域，用于显示完整路径
+        let trackingArea = NSTrackingArea(
+            rect: currentNoteLabel.bounds,
+            options: [.mouseEnteredAndExited, .activeAlways],
+            owner: currentNoteLabel,
+            userInfo: nil
+        )
+        currentNoteLabel.addTrackingArea(trackingArea)
+        
+        // 添加鼠标事件处理
+        currentNoteLabel.wantsLayer = true
+        currentNoteLabel.layer?.cornerRadius = 4
+        
+        // 子类化 NSTextField 来处理鼠标事件
+        class HoverableLabel: NSTextField {
+            override func mouseEntered(with event: NSEvent) {
+                super.mouseEntered(with: event)
+                self.layer?.backgroundColor = NSColor(white: 0.5, alpha: 0.1).cgColor
+            }
+            
+            override func mouseExited(with event: NSEvent) {
+                super.mouseExited(with: event)
+                self.layer?.backgroundColor = .clear
+            }
+        }
+        
+        // 使用新的可悬停标签
+        let hoverableLabel = HoverableLabel(frame: currentNoteLabel.frame)
+        hoverableLabel.isEditable = false
+        hoverableLabel.isBordered = false
+        hoverableLabel.backgroundColor = .clear
+        hoverableLabel.cell?.truncatesLastVisibleLine = true
+        hoverableLabel.cell?.lineBreakMode = .byTruncatingMiddle
+        hoverableLabel.font = NSFont.systemFont(ofSize: 12)
+        currentNoteLabel = hoverableLabel
+        
+        labelContainer.addSubview(currentNoteLabel)
+        contentView.addSubview(labelContainer)
         
         // 创建内容文本视图
         let scrollView = NSScrollView(frame: NSRect(x: 20, y: 20, width: window.contentView!.bounds.width - 40, height: window.contentView!.bounds.height - 80))
@@ -361,10 +414,28 @@ class NoteWindowController: NSWindowController {
         contentView.addSubview(scrollView)
         
         window.contentView = contentView
+        
+        // 更新当前笔记标签
+        updateCurrentNoteLabel()
     }
     
     func updateCurrentNoteLabel() {
-        currentNoteLabel.stringValue = "当前笔记：\(NoteManager.shared.lastSelectedNote)"
+        let path = NoteManager.shared.lastSelectedNote
+        if path.isEmpty {
+            currentNoteLabel.stringValue = "未选择笔记"
+            currentNoteLabel.toolTip = nil
+        } else {
+            // 获取相对于用户主目录的路径
+            var relativePath = path
+            let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+            if path.hasPrefix(homeDir) {
+                relativePath = path.replacingOccurrences(of: homeDir, with: "~")
+            }
+            
+            // 设置显示文本和工具提示
+            currentNoteLabel.stringValue = relativePath
+            currentNoteLabel.toolTip = path  // 显示完整路径作为工具提示
+        }
     }
     
     @objc func selectDefaultPath() {
@@ -749,7 +820,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
-        //panel.title = "AI 助手"
+        //panel.title = "AI助手"
         panel.titlebarAppearsTransparent = true
         panel.backgroundColor = NSColor.windowBackgroundColor
         panel.isMovableByWindowBackground = true
@@ -760,6 +831,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
+        
+        // 移除左上角的代表性图标
+        panel.representedURL = nil
+        panel.representedFilename = ""
+        panel.isDocumentEdited = false
         
         // 设置圆角
         panel.contentView?.wantsLayer = true
