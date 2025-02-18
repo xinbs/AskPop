@@ -790,9 +790,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             } else {
                 // 普通模式
                 messages = [["role": "system", "content": prompt]]
-                messages.append(["role": "user", "content": text])
+                // 检查是否是翻译模式
+                let isTranslateMode = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "translate_action"
+                let messageText = isTranslateMode ? "翻译: \(text)" : text
+                messages.append(["role": "user", "content": messageText])
                 createWindow()
-                callAPI(withPrompt: "", text: text)
+                // 在 WebView 中显示原始文本（不带前缀）
+                webView?.evaluateJavaScript("""
+                    appendMessage('user', `\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`"))`, false);
+                """)
+                callAPI(withPrompt: "", text: messageText)
             }
         } else {
             print("错误：没有接收到文本")
@@ -1431,10 +1438,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         guard let text = inputField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else { return }
         
-        messages.append(["role": "user", "content": text])
+        // 检查是否是翻译模式
+        let isTranslateMode = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "translate_action"
+        let messageText = isTranslateMode ? "翻译: \(text)" : text
+        
+        messages.append(["role": "user", "content": messageText])
         inputField?.stringValue = ""
         
-        // 立即显示用户消息
+        // 立即显示用户消息，但显示原始文本
         if let webView = self.webView {
             let script = """
                 appendMessage('user', `\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`"))`, false);
@@ -1443,7 +1454,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
         
         // 使用空提示词调用 API（对话模式）
-        callAPI(withPrompt: "", text: text)
+        callAPI(withPrompt: "", text: messageText)
     }
     
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1452,9 +1463,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         for message in messages {
             // 跳过系统提示词
             if message["role"] == "system" { continue }
+            
+            // 获取显示文本（如果是翻译模式下的用户消息，移除前缀）
+            var displayContent = message["content"] ?? ""
+            if message["role"] == "user" && ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "translate_action" {
+                // 只在翻译模式下移除"翻译: "前缀
+                displayContent = displayContent.replacingOccurrences(of: "翻译: ", with: "")
+            }
+            
             print("显示消息：\(message)")
             let script = """
-                appendMessage('\(message["role"] ?? "")', `\(message["content"]?.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`") ?? "")`, false, '\(model)');
+                appendMessage('\(message["role"] ?? "")', `\(displayContent.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`"))`, false, '\(model)');
             """
             webView.evaluateJavaScript(script)
         }
