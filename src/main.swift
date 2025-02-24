@@ -278,19 +278,56 @@ class NoteManager {
 }
 
 // 添加笔记窗口控制器类
-class NoteWindowController: NSWindowController {
+class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
     var defaultPathButton: NSButton!
     var newNoteButton: NSButton!
     var selectNoteButton: NSButton!
     var saveButton: NSButton!
     var currentNoteLabel: NSTextField!
     var contentTextView: NSTextView!
-    var originalText: String = ""  // 存储原始文本
+    var originalText: String = ""
+    var blinkoStatusLabel: NSTextField!
+    
+    // 添加表格视图和笔记列表属性
+    private var noteTableView: NSTableView?
+    private var noteList: [(id: Int, title: String)] = []
     
     var aiContent: String = "" {
         didSet {
             contentTextView.string = aiContent
         }
+    }
+    
+    // 添加表格视图的数据源方法
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        return noteList.count
+    }
+    
+    func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? {
+        guard row < noteList.count else { return nil }
+        return "#\(noteList[row].id) - \(noteList[row].title)"
+    }
+
+    // 添加表格视图的代理方法
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let identifier = NSUserInterfaceItemIdentifier("NoteCellView")
+        var cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
+        
+        if cell == nil {
+            cell = NSTableCellView(frame: NSRect(x: 0, y: 0, width: tableView.frame.width, height: 30))
+            cell?.identifier = identifier
+            
+            let textField = NSTextField(frame: NSRect(x: 5, y: 0, width: tableView.frame.width - 10, height: 30))
+            textField.isEditable = false
+            textField.isBordered = false
+            textField.drawsBackground = false
+            textField.font = NSFont.systemFont(ofSize: 13)
+            cell?.textField = textField
+            cell?.addSubview(textField)
+        }
+        
+        cell?.textField?.stringValue = "#\(noteList[row].id) - \(noteList[row].title)"
+        return cell
     }
     
     convenience init(withText text: String = "") {
@@ -309,7 +346,7 @@ class NoteWindowController: NSWindowController {
             let y = screenFrame.origin.y + (screenFrame.height - windowFrame.height) / 2
             window.setFrameOrigin(NSPoint(x: x, y: y))
         }
-        
+
         window.title = "笔记模式"
         self.init(window: window)
         
@@ -417,6 +454,19 @@ class NoteWindowController: NSWindowController {
         
         // 更新当前笔记标签
         updateCurrentNoteLabel()
+        
+        // 创建 Blinko 状态标签
+        blinkoStatusLabel = NSTextField(frame: NSRect(x: 20, y: window.contentView!.bounds.height - 60, width: window.contentView!.bounds.width - 40, height: 20))
+        blinkoStatusLabel.isEditable = false
+        blinkoStatusLabel.isBordered = false
+        blinkoStatusLabel.backgroundColor = .clear
+        blinkoStatusLabel.textColor = .secondaryLabelColor
+        blinkoStatusLabel.font = NSFont.systemFont(ofSize: 12)
+        blinkoStatusLabel.cell?.truncatesLastVisibleLine = true
+        blinkoStatusLabel.cell?.lineBreakMode = .byTruncatingMiddle
+        window.contentView?.addSubview(blinkoStatusLabel)
+        
+        updateBlinkoStatus()
     }
     
     func updateCurrentNoteLabel() {
@@ -424,7 +474,7 @@ class NoteWindowController: NSWindowController {
         if path.isEmpty {
             currentNoteLabel.stringValue = "未选择笔记"
             currentNoteLabel.toolTip = nil
-        } else {
+                } else {
             // 获取相对于用户主目录的路径
             var relativePath = path
             let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
@@ -438,18 +488,291 @@ class NoteWindowController: NSWindowController {
         }
     }
     
+    func updateBlinkoStatus() {
+        let noteId = BlinkoManager.shared.lastNoteId
+        let noteTitle = BlinkoManager.shared.lastNoteTitle
+        if noteId > 0 {
+            blinkoStatusLabel.stringValue = "当前 Blinko 笔记: #\(noteId) - \(noteTitle)"
+        } else {
+            blinkoStatusLabel.stringValue = "未选择 Blinko 笔记"
+        }
+    }
+    
     @objc func selectDefaultPath() {
+        // 创建设置窗口
+        let settingsWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        settingsWindow.title = "笔记设置"
+        
+        // 创建主容器
+        let contentView = NSView(frame: settingsWindow.contentView!.bounds)
+        contentView.autoresizingMask = [.width, .height]
+        
+        // 创建本地笔记设置区域标题和说明
+        let localNoteTitle = NSTextField(labelWithString: "本地笔记设置")
+        localNoteTitle.frame = NSRect(x: 20, y: contentView.frame.height - 40, width: 200, height: 20)
+        localNoteTitle.font = NSFont.boldSystemFont(ofSize: 14)
+        contentView.addSubview(localNoteTitle)
+        
+        let localNoteDesc = NSTextField(labelWithString: "设置本地 Markdown 笔记的默认保存目录")
+        localNoteDesc.frame = NSRect(x: 20, y: contentView.frame.height - 65, width: 400, height: 20)
+        localNoteDesc.font = NSFont.systemFont(ofSize: 12)
+        localNoteDesc.textColor = .secondaryLabelColor
+        contentView.addSubview(localNoteDesc)
+        
+        // 创建路径选择区域
+        let pathContainer = NSView(frame: NSRect(x: 20, y: contentView.frame.height - 95, width: contentView.frame.width - 40, height: 20))
+        contentView.addSubview(pathContainer)
+        
+        let pathLabel = NSTextField(labelWithString: "默认保存路径：")
+        pathLabel.frame = NSRect(x: 0, y: 0, width: 100, height: 20)
+        pathLabel.isEditable = false
+        pathLabel.isBordered = false
+        pathLabel.backgroundColor = .clear
+        pathLabel.drawsBackground = false
+        pathContainer.addSubview(pathLabel)
+        
+        let pathField = NSTextField(frame: NSRect(x: 100, y: 0, width: pathContainer.frame.width - 180, height: 20))
+        pathField.stringValue = NoteManager.shared.defaultNotePath
+        pathField.isEditable = false
+        pathField.isBordered = false
+        pathField.backgroundColor = .clear
+        pathField.drawsBackground = false
+        pathField.textColor = .labelColor
+        pathField.cell?.truncatesLastVisibleLine = true
+        pathField.cell?.lineBreakMode = .byTruncatingMiddle
+        pathField.font = NSFont.systemFont(ofSize: 12)
+        pathContainer.addSubview(pathField)
+        
+        let browseButton = HoverableButton(frame: NSRect(x: pathContainer.frame.width - 70, y: 0, width: 70, height: 20))
+        browseButton.title = "浏览"
+        browseButton.bezelStyle = .rounded
+        browseButton.target = self
+        browseButton.action = #selector(browsePath(_:))
+        pathContainer.addSubview(browseButton)
+        
+        // 创建 Blinko 设置区域标题和说明
+        let blinkoTitle = NSTextField(labelWithString: "Blinko 笔记设置")
+        blinkoTitle.frame = NSRect(x: 20, y: contentView.frame.height - 145, width: 200, height: 20)
+        blinkoTitle.font = NSFont.boldSystemFont(ofSize: 14)
+        contentView.addSubview(blinkoTitle)
+        
+        let blinkoDesc = NSTextField(labelWithString: "选择 Blinko 默认笔记或当前工作笔记")
+        blinkoDesc.frame = NSRect(x: 20, y: contentView.frame.height - 170, width: 400, height: 20)
+        blinkoDesc.font = NSFont.systemFont(ofSize: 12)
+        blinkoDesc.textColor = .secondaryLabelColor
+        contentView.addSubview(blinkoDesc)
+        
+        // 创建笔记列表视图容器
+        let scrollView = NSScrollView(frame: NSRect(x: 20, y: 100, width: 460, height: contentView.frame.height - 290))
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .bezelBorder
+        contentView.addSubview(scrollView)
+
+        // 创建表格视图
+        let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: scrollView.contentSize.height))
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("NoteColumn"))
+        column.title = "笔记列表"
+        column.width = scrollView.contentSize.width - 20
+        tableView.addTableColumn(column)
+        tableView.headerView = nil
+        tableView.allowsMultipleSelection = false
+        tableView.selectionHighlightStyle = .regular
+        tableView.backgroundColor = .clear
+        tableView.gridStyleMask = []
+        tableView.rowHeight = 30
+        scrollView.documentView = tableView
+
+        // 创建底部按钮区域
+        let buttonContainer = NSView(frame: NSRect(x: 20, y: 20, width: 460, height: 30))
+        
+        // 创建刷新按钮
+        let refreshButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 70, height: 30))
+        refreshButton.title = "刷新"
+        refreshButton.bezelStyle = .rounded
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshNoteList(_:))
+        buttonContainer.addSubview(refreshButton)
+
+        // 创建选择按钮
+        let selectButton = HoverableButton(frame: NSRect(x: 80, y: 0, width: 70, height: 30))
+        selectButton.title = "选择"
+        selectButton.bezelStyle = .rounded
+        selectButton.target = self
+        selectButton.action = #selector(selectCurrentNote(_:))
+        buttonContainer.addSubview(selectButton)
+
+        // 创建重置按钮
+        let resetButton = NSButton(frame: NSRect(x: 160, y: 0, width: 70, height: 30))
+        resetButton.title = "重置"
+        resetButton.bezelStyle = .rounded
+        resetButton.target = self
+        resetButton.action = #selector(resetToDefaultNote(_:))
+        buttonContainer.addSubview(resetButton)
+
+        // 创建取消按钮
+        let cancelButton = NSButton(frame: NSRect(x: 310, y: 0, width: 70, height: 30))
+        cancelButton.title = "取消"
+        cancelButton.bezelStyle = .rounded
+        cancelButton.target = self
+        cancelButton.action = #selector(closeSettings(_:))
+        buttonContainer.addSubview(cancelButton)
+
+        // 创建确定按钮
+        let confirmButton = NSButton(frame: NSRect(x: 390, y: 0, width: 70, height: 30))
+        confirmButton.title = "确定"
+        confirmButton.bezelStyle = .rounded
+        confirmButton.target = self
+        confirmButton.action = #selector(saveSettings(_:))
+        buttonContainer.addSubview(confirmButton)
+
+        contentView.addSubview(buttonContainer)
+
+        // 设置表格视图的数据源和代理
+        tableView.dataSource = self
+        tableView.delegate = self
+
+        // 存储表格视图的引用
+        self.noteTableView = tableView
+
+        settingsWindow.contentView = contentView
+
+        // 加载笔记列表
+        Task {
+            do {
+                let notes = try await BlinkoManager.shared.getNoteList()
+                await MainActor.run {
+                    self.noteList = notes
+                    tableView.reloadData()
+                    
+                    // 选中当前笔记
+                    let currentNoteId = BlinkoManager.shared.lastNoteId
+                    if currentNoteId > 0 {
+                        for (index, note) in notes.enumerated() {
+                            if note.id == currentNoteId {
+                                tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                                break
+                            }
+                        }
+                    }
+                }
+            } catch {
+                print("加载笔记列表失败：\(error)")
+            }
+        }
+
+        // 显示设置窗口
+        if let mainWindow = self.window {
+            mainWindow.beginSheet(settingsWindow)
+        }
+    }
+    
+    @objc func browsePath(_ sender: NSButton) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
+        panel.message = "请选择本地笔记的默认保存目录"
+        panel.prompt = "选择"
         
-        panel.beginSheetModal(for: window!) { response in
-            if response == .OK {
-                if let url = panel.url {
-                    NoteManager.shared.defaultNotePath = url.path
+        // 如果已有默认路径，设置为初始目录
+        if !NoteManager.shared.defaultNotePath.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: NoteManager.shared.defaultNotePath)
+        }
+        
+        // 获取设置窗口
+        if let settingsWindow = sender.window {
+            panel.beginSheetModal(for: settingsWindow) { [weak self] response in
+                if response == .OK {
+                    if let url = panel.url {
+                        // 保存选择的路径
+                        NoteManager.shared.defaultNotePath = url.path
+                        
+                        // 更新路径显示
+                        if let pathField = settingsWindow.contentView?.subviews.first(where: { ($0 as? NSTextField)?.frame.origin.y == settingsWindow.contentView!.frame.height - 95 }) as? NSTextField {
+                            pathField.stringValue = url.path
+                        }
+                        
+                        // 显示成功提示
+                        if let button = sender as? HoverableButton {
+                            button.showFeedback("已设置默认目录")
+                        }
+                    }
                 }
             }
+        }
+    }
+    
+    @objc func refreshNoteList(_ sender: NSButton) {
+        // 禁用按钮并显示加载状态
+        sender.isEnabled = false
+        sender.title = "加载中..."
+        
+        Task {
+            do {
+                let notes = try await BlinkoManager.shared.getNoteList()
+                await MainActor.run {
+                    self.noteList = notes
+                    self.noteTableView?.reloadData()
+                    
+                    // 选中当前笔记
+                    let currentNoteId = BlinkoManager.shared.lastNoteId
+                    if currentNoteId > 0 {
+                        for (index, note) in notes.enumerated() {
+                            if note.id == currentNoteId {
+                                self.noteTableView?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                                break
+                            }
+                        }
+                    }
+                    
+                    // 恢复按钮状态
+                    sender.isEnabled = true
+                    sender.title = "刷新"
+                    
+                    // 显示成功提示
+                    if let button = sender as? HoverableButton {
+                        button.showFeedback("刷新成功")
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    // 恢复按钮状态
+                    sender.isEnabled = true
+                    sender.title = "刷新"
+                    
+                    // 显示错误提示
+                    if let button = sender as? HoverableButton {
+                        button.showFeedback("刷新失败：\(error.localizedDescription)")
+                    }
+                    print("刷新笔记列表失败：\(error)")
+                }
+            }
+        }
+    }
+    
+    @objc func closeSettings(_ sender: NSButton) {
+        if let settingsWindow = sender.window {
+            window?.endSheet(settingsWindow)
+        }
+    }
+    
+    @objc func saveSettings(_ sender: NSButton) {
+        if let settingsWindow = sender.window {
+            // 保存当前选中的笔记作为默认笔记
+            if let selectedRow = noteTableView?.selectedRow,
+               selectedRow >= 0 && selectedRow < noteList.count {
+                let selectedNote = noteList[selectedRow]
+                BlinkoManager.shared.defaultNoteId = selectedNote.id
+            }
+            
+            window?.endSheet(settingsWindow)
         }
     }
     
@@ -581,6 +904,128 @@ class NoteWindowController: NSWindowController {
             rewriteButton.showFeedback("正在改写...")
         }
     }
+    
+    @objc func saveToBlinko() {
+        Task {
+            do {
+                let content = contentTextView.string
+                let defaultNoteId = BlinkoManager.shared.defaultNoteId
+                
+                if BlinkoManager.shared.lastNoteId > 0 {
+                    // 更新最后使用的笔记
+                    let _ = try await BlinkoManager.shared.updateNote(
+                        id: BlinkoManager.shared.lastNoteId,
+                        content: content
+                    )
+                    await MainActor.run {
+                        updateBlinkoStatus()
+                        if let blinkoButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveToBlinko" })?.view as? HoverableButton {
+                            blinkoButton.showFeedback("已更新到 Blinko")
+                        }
+                    }
+                } else if defaultNoteId > 0 {
+                    // 更新默认笔记
+                    let _ = try await BlinkoManager.shared.updateNote(
+                        id: defaultNoteId,
+                        content: content
+                    )
+                    await MainActor.run {
+                        BlinkoManager.shared.lastNoteId = defaultNoteId
+                        BlinkoManager.shared.lastNoteTitle = content.components(separatedBy: .newlines).first ?? "无标题"
+                        updateBlinkoStatus()
+                        if let blinkoButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveToBlinko" })?.view as? HoverableButton {
+                            blinkoButton.showFeedback("已更新到默认笔记")
+                        }
+                    }
+                } else {
+                    // 创建新笔记
+                    let _ = try await BlinkoManager.shared.createNote(content: content)
+                    await MainActor.run {
+                        updateBlinkoStatus()
+                        if let blinkoButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveToBlinko" })?.view as? HoverableButton {
+                            blinkoButton.showFeedback("已保存到 Blinko")
+                        }
+                    }
+                }
+            } catch {
+                if let blinkoButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveToBlinko" })?.view as? HoverableButton {
+                    blinkoButton.showFeedback("保存失败：\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    @objc func createBlinkoFlash() {
+        Task {
+            do {
+                let content = contentTextView.string
+                let _ = try await BlinkoManager.shared.createNote(content: content, type: 0)  // type 0 表示闪念
+                await MainActor.run {
+                    updateBlinkoStatus()
+                    if let flashButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "createBlinkoFlash" })?.view as? HoverableButton {
+                        flashButton.showFeedback("已创建闪念")
+                    }
+                }
+            } catch {
+                if let flashButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "createBlinkoFlash" })?.view as? HoverableButton {
+                    flashButton.showFeedback("创建失败：\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    @objc func resetToDefaultNote(_ sender: NSButton) {
+        // 获取默认笔记 ID
+        let defaultNoteId = BlinkoManager.shared.defaultNoteId
+        if defaultNoteId > 0 {
+            // 设置当前笔记为默认笔记
+            BlinkoManager.shared.lastNoteId = defaultNoteId
+            // 更新 UI
+            updateBlinkoStatus()
+            
+            // 在列表中选中默认笔记
+            if let tableView = noteTableView {
+                for (index, note) in noteList.enumerated() {
+                    if note.id == defaultNoteId {
+                        tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                        break
+                    }
+                }
+            }
+            
+            // 显示反馈
+            if let button = sender as? HoverableButton {
+                button.showFeedback("已重置为默认笔记")
+            }
+        } else {
+            if let button = sender as? HoverableButton {
+                button.showFeedback("未设置默认笔记")
+            }
+        }
+    }
+
+    @objc func selectCurrentNote(_ sender: NSButton) {
+        guard let tableView = noteTableView,
+              let selectedRow = tableView.selectedRowIndexes.first,
+              selectedRow < noteList.count else {
+            if let button = sender as? HoverableButton {
+                button.showFeedback("请先选择笔记")
+            }
+            return
+        }
+        
+        let selectedNote = noteList[selectedRow]
+        BlinkoManager.shared.lastNoteId = selectedNote.id
+        BlinkoManager.shared.lastNoteTitle = selectedNote.title
+        
+        // 更新 UI
+        updateBlinkoStatus()
+        
+        // 显示反馈
+        if let button = sender as? HoverableButton {
+            button.showFeedback("已选择当前笔记")
+        }
+    }
 }
 
 // 添加工具栏代理
@@ -659,6 +1104,34 @@ extension NoteWindowController: NSToolbarDelegate {
             }
             item.view = button
             
+        case "saveToBlinko":
+            item.label = "保存到 Blinko"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "square.and.arrow.up.trianglebadge.exclamationmark", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(saveToBlinko)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            item.view = button
+            
+        case "createBlinkoFlash":
+            item.label = "新建闪念"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "bolt.badge.plus", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(createBlinkoFlash)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            item.view = button
+            
         default:
             return nil
         }
@@ -673,12 +1146,226 @@ extension NoteWindowController: NSToolbarDelegate {
             NSToolbarItem.Identifier("selectNote"),
             NSToolbarItem.Identifier("saveContent"),
             NSToolbarItem.Identifier("rewriteContent"),
+            NSToolbarItem.Identifier("saveToBlinko"),
+            NSToolbarItem.Identifier("createBlinkoFlash"),
             .flexibleSpace
         ]
     }
     
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         return toolbarDefaultItemIdentifiers(toolbar)
+    }
+}
+
+// 添加 Blinko 笔记结构体
+struct BlinkoNote: Codable {
+    var id: Int
+    var content: String
+    var type: Int  // 0 - 闪念, 1 - 笔记
+    var title: String
+    
+    static func extractTitle(from content: String) -> String {
+        return content.components(separatedBy: .newlines).first ?? "无标题"
+    }
+}
+
+// 添加 Blinko 管理器类
+class BlinkoManager {
+    static let shared = BlinkoManager()
+    private let settingsURL: URL
+    private var settings: [String: Any] = [:]
+    
+    // Blinko API 配置
+    private var baseUrl: String
+    private var apiToken: String
+    
+    // 笔记列表缓存
+    private var noteListCache: [(id: Int, title: String)] = []
+    
+    private init() {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appFolder = appSupport.appendingPathComponent("AskPop")
+        settingsURL = appFolder.appendingPathComponent("blinko_settings.json")
+        
+        // 从 PopClip 环境变量获取配置
+        apiToken = ProcessInfo.processInfo.environment["POPCLIP_OPTION_BLINKO_TOKEN"] ?? ""
+        baseUrl = ProcessInfo.processInfo.environment["POPCLIP_OPTION_BLINKO_BASE_URL"] ?? ""
+        
+        // 创建应用程序文件夹
+        try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true)
+        
+        // 加载设置
+        if let data = try? Data(contentsOf: settingsURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            settings = json
+        }
+    }
+    
+    var lastNoteId: Int {
+        get { settings["lastNoteId"] as? Int ?? 0 }
+        set {
+            settings["lastNoteId"] = newValue
+            saveSettings()
+        }
+    }
+    
+    var lastNoteTitle: String {
+        get { settings["lastNoteTitle"] as? String ?? "" }
+        set {
+            settings["lastNoteTitle"] = newValue
+            saveSettings()
+        }
+    }
+    
+    var defaultNoteId: Int {
+        get { settings["defaultNoteId"] as? Int ?? 0 }
+        set {
+            settings["defaultNoteId"] = newValue
+            saveSettings()
+        }
+    }
+    
+    private func saveSettings() {
+        if let data = try? JSONSerialization.data(withJSONObject: settings) {
+            try? data.write(to: settingsURL)
+        }
+    }
+    
+    // 获取笔记列表
+    func getNoteList() async throws -> [(id: Int, title: String)] {
+        guard !apiToken.isEmpty else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置 Blinko API Token"])
+        }
+
+        let url = URL(string: "\(baseUrl)/api/v1/note/list")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let requestBody: [String: Any] = [
+            "page": 1,
+            "size": 100,  // 获取前100条笔记
+            "orderBy": "desc",
+            "type": 1,  // 只获取笔记类型
+            "isArchived": false,
+            "isRecycle": false
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        print("发送请求到 Blinko API: \(url.absoluteString)")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的 HTTP 响应"])
+        }
+        
+        print("收到响应状态码: \(httpResponse.statusCode)")
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            // 尝试解析错误响应
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let errorMessage = errorJson["message"] as? String {
+                throw NSError(domain: "", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "API 错误: \(errorMessage)"])
+            }
+            throw NSError(domain: "", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "API 请求失败: HTTP \(httpResponse.statusCode)"])
+        }
+        
+        // 打印接收到的数据以便调试
+        if let jsonString = String(data: data, encoding: .utf8) {
+            print("收到的 JSON 数据: \(jsonString)")
+        }
+        
+        do {
+            // 直接解析为数组
+            if let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                noteListCache = jsonArray.compactMap { item in
+                    guard let id = item["id"] as? Int,
+                          let content = item["content"] as? String else {
+                        return nil
+                    }
+                    
+                    let title = BlinkoNote.extractTitle(from: content)
+                    return (id, title)
+                }
+                
+                print("成功解析 \(noteListCache.count) 条笔记")
+                return noteListCache
+            } else {
+                throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "API 响应格式错误: 不是有效的笔记列表"])
+            }
+        } catch {
+            print("JSON 解析错误: \(error)")
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "解析笔记列表失败: \(error.localizedDescription)"])
+        }
+    }
+    
+    func createNote(content: String, type: Int = 1) async throws -> BlinkoNote {
+        guard !apiToken.isEmpty else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置 Blinko API Token"])
+        }
+        
+        let url = URL(string: "\(baseUrl)/api/v1/note/upsert")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let noteData: [String: Any] = [
+            "content": content,
+            "type": type
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: noteData)
+        
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "创建笔记失败"])
+        }
+        
+        guard let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+              let id = json["id"] as? Int else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "解析响应失败"])
+        }
+        
+        let note = BlinkoNote(id: id, content: content, type: type, title: BlinkoNote.extractTitle(from: content))
+        lastNoteId = note.id
+        lastNoteTitle = note.title
+        return note
+    }
+    
+    func updateNote(id: Int, content: String) async throws -> BlinkoNote {
+        guard !apiToken.isEmpty else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置 Blinko API Token"])
+        }
+        
+        let url = URL(string: "\(baseUrl)/api/v1/note/upsert")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let noteData: [String: Any] = [
+            "id": id,
+            "content": content
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: noteData)
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "更新笔记失败"])
+        }
+        
+        let note = BlinkoNote(id: id, content: content, type: 1, title: BlinkoNote.extractTitle(from: content))
+        lastNoteId = note.id
+        lastNoteTitle = note.title
+        return note
     }
 }
 
@@ -1430,8 +2117,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
     
     @objc func closeWindow() {
-        currentTask?.cancel()
-        NSApp.terminate(nil)
+        NSApplication.shared.terminate(nil)
     }
     
     @objc func sendMessage() {
@@ -1510,34 +2196,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 print("开始调用 API...")
                 let _ = try await callAIAPI(withPrompt: prompt, text: text)
                 if !Task.isCancelled {
-                    print("API 调用成功")
+                    await MainActor.run {
+                        updateLastMessage()
+                    }
                 }
             } catch {
-                if !Task.isCancelled {
-                    print("API 调用失败: \(error)")
-                    
-                    // 检查是否是笔记模式
-                    let isNoteMode = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "note_action"
-                    
-                    await MainActor.run {
-                        if isNoteMode {
-                            // 在笔记窗口显示错误
-                            if let noteWindow = NSApp.windows
-                                .compactMap({ $0.windowController as? NoteWindowController })
-                                .first {
-                                noteWindow.aiContent = "错误：\(error.localizedDescription)"
-                            }
-                        } else {
-                            // 在聊天窗口显示错误
-                            guard let webView = self.webView else { return }
-                            let errorScript = """
-                                const errorDiv = document.createElement('div');
-                                errorDiv.className = 'message';
-                                errorDiv.innerHTML = '<div class="message-header"><span class="ai-name">错误</span></div><div class="message-content" style="color: red;">\(error.localizedDescription)</div>';
-                                document.getElementById('messages').appendChild(errorDiv);
-                            """
-                            webView.evaluateJavaScript(errorScript)
-                        }
+                print("API 调用失败：\(error)")
+                await MainActor.run {
+                    if let webView = self.webView {
+                        let errorMessage = "API 调用失败：\(error.localizedDescription)"
+                        let script = """
+                            appendMessage('error', `\(errorMessage.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`"))`, false);
+                        """
+                        webView.evaluateJavaScript(script)
                     }
                 }
             }
@@ -1713,4 +2384,5 @@ extension AppDelegate: NSWindowDelegate {
             NSApp.terminate(nil)  // 确保在主线程中终止应用
         }
     }
-} 
+}
+

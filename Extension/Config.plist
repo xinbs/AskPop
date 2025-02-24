@@ -110,6 +110,30 @@
             <key>Default Value</key>
             <string>0.7</string>
         </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>blinko_token</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>Blinko API Token</string>
+            <key>Default Value</key>
+            <string></string>
+            <key>Description</key>
+            <string>用于访问 Blinko API 的认证令牌</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>blinko_base_url</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>Blinko API URL</string>
+            <key>Default Value</key>
+            <string></string>
+            <key>Description</key>
+            <string>Blinko API 服务器地址</string>
+        </dict>
     </array>
     <key>Actions</key>
     <array>
@@ -144,6 +168,10 @@
             <string>{popclip option model}</string>
             <key>Option Temperature</key>
             <string>{popclip option temperature}</string>
+            <key>Option Blinko Token</key>
+            <string>{popclip option blinko_token}</string>
+            <key>Option Blinko Base URL</key>
+            <string>{popclip option blinko_base_url}</string>
         </dict>
         <dict>
             <key>Identifier</key>
