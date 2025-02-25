@@ -91,9 +91,9 @@ class HoverableButton: NSButton {
         feedback.stringValue = text
         feedback.isEditable = false
         feedback.isBordered = false
-        feedback.backgroundColor = NSColor.clear
-        feedback.drawsBackground = false
-        feedback.textColor = NSColor.secondaryLabelColor
+        feedback.backgroundColor = NSColor(white: 0.3, alpha: 0.9)  // 深灰色背景
+        feedback.drawsBackground = true  // 显示背景
+        feedback.textColor = NSColor.white  // 白色文字
         feedback.alignment = .center
         feedback.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         
@@ -118,9 +118,9 @@ class HoverableButton: NSButton {
             defer: false
         )
         
-        panel.backgroundColor = .clear
+        panel.backgroundColor = NSColor(white: 0.3, alpha: 0.9)  // 面板也使用深灰色背景
         panel.isOpaque = false
-        panel.hasShadow = false
+        panel.hasShadow = true  // 添加阴影效果
         panel.isMovable = false
         
         feedback.frame = NSRect(x: 0, y: 0, width: width, height: height)
@@ -147,9 +147,9 @@ class HoverableButton: NSButton {
         feedback.stringValue = text
         feedback.isEditable = false
         feedback.isBordered = false
-        feedback.backgroundColor = .clear
-        feedback.drawsBackground = false
-        feedback.textColor = NSColor.secondaryLabelColor
+        feedback.backgroundColor = NSColor(white: 0.3, alpha: 0.9)  // 深灰色背景
+        feedback.drawsBackground = true  // 显示背景
+        feedback.textColor = NSColor.white  // 白色文字
         feedback.alignment = .center
         feedback.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         
@@ -176,9 +176,9 @@ class HoverableButton: NSButton {
             defer: false
         )
         
-        panel.backgroundColor = .clear
+        panel.backgroundColor = NSColor(white: 0.3, alpha: 0.9)  // 面板也使用深灰色背景
         panel.isOpaque = false
-        panel.hasShadow = false
+        panel.hasShadow = true  // 添加阴影效果
         panel.isMovable = false
         
         feedback.translatesAutoresizingMaskIntoConstraints = false
@@ -332,7 +332,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     
     convenience init(withText text: String = "") {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 400), // 将宽度从 600 改为 800
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -1083,7 +1083,7 @@ extension NoteWindowController: NSToolbarDelegate {
         
         switch itemIdentifier.rawValue {
         case "defaultPath":
-            item.label = "set"
+            item.label = "设置"
             let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
             button.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
             button.target = self
@@ -1094,10 +1094,11 @@ extension NoteWindowController: NSToolbarDelegate {
             button.hoverHandler = { [weak button] isHovered in
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
+            button.toolTip = "设置默认笔记目录"
             item.view = button
             
         case "newNote":
-            item.label = "new"
+            item.label = "新建"
             let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
             button.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)
             button.target = self
@@ -1108,10 +1109,11 @@ extension NoteWindowController: NSToolbarDelegate {
             button.hoverHandler = { [weak button] isHovered in
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
+            button.toolTip = "新建本地笔记"
             item.view = button
             
         case "selectNote":
-            item.label = "select"
+            item.label = "选择"
             let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
             button.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: nil)
             button.target = self
@@ -1122,10 +1124,11 @@ extension NoteWindowController: NSToolbarDelegate {
             button.hoverHandler = { [weak button] isHovered in
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
+            button.toolTip = "选择本地笔记"
             item.view = button
             
         case "saveContent":
-            item.label = "save"
+            item.label = "保存"
             let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
             button.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: nil)
             button.target = self
@@ -1136,10 +1139,11 @@ extension NoteWindowController: NSToolbarDelegate {
             button.hoverHandler = { [weak button] isHovered in
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
+            button.toolTip = "保存到本地笔记"
             item.view = button
             
         case "rewriteContent":
-            item.label = "rewrite"
+            item.label = "改写"
             let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
             button.image = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil)
             button.target = self
@@ -1150,38 +1154,11 @@ extension NoteWindowController: NSToolbarDelegate {
             button.hoverHandler = { [weak button] isHovered in
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
-            item.view = button
-            
-        case "saveToBlinko":
-            item.label = "保存到 Blinko"
-            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
-            button.image = NSImage(systemSymbolName: "arrow.up.doc.fill", accessibilityDescription: nil)
-            button.target = self
-            button.action = #selector(saveToBlinko)
-            button.isBordered = true
-            button.bezelStyle = .texturedRounded
-            button.contentTintColor = NSColor.secondaryLabelColor
-            button.hoverHandler = { [weak button] isHovered in
-                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
-            }
-            item.view = button
-            
-        case "createBlinkoFlash":
-            item.label = "新建闪念"
-            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
-            button.image = NSImage(systemSymbolName: "bolt.circle.fill", accessibilityDescription: nil)
-            button.target = self
-            button.action = #selector(createBlinkoFlash)
-            button.isBordered = true
-            button.bezelStyle = .texturedRounded
-            button.contentTintColor = NSColor.secondaryLabelColor
-            button.hoverHandler = { [weak button] isHovered in
-                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
-            }
+            button.toolTip = "AI 改写内容"
             item.view = button
             
         case "syncToBlinko":
-            item.label = "同步到 Blinko"
+            item.label = "同步"
             let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
             button.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
             button.target = self
@@ -1192,7 +1169,37 @@ extension NoteWindowController: NSToolbarDelegate {
             button.hoverHandler = { [weak button] isHovered in
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
-            button.toolTip = "将本地笔记同步到 Blinko"
+            button.toolTip = "同步到 Blinko"
+            item.view = button
+            
+        case "saveToBlinko":
+            item.label = "保存"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "arrow.up.doc.fill", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(saveToBlinko)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            button.toolTip = "保存到 Blinko"
+            item.view = button
+            
+        case "createBlinkoFlash":
+            item.label = "闪念"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "bolt.circle.fill", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(createBlinkoFlash)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            button.toolTip = "创建 Blinko 闪念"
             item.view = button
             
         default:
@@ -1204,20 +1211,36 @@ extension NoteWindowController: NSToolbarDelegate {
     
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         return [
+            // 本地笔记操作组
+            NSToolbarItem.Identifier("defaultPath"),
+            NSToolbarItem.Identifier("newNote"),
+            NSToolbarItem.Identifier("selectNote"),
+            .flexibleSpace,
+            
+            // 内容操作组
+            NSToolbarItem.Identifier("saveContent"),
+            NSToolbarItem.Identifier("rewriteContent"),
+            .flexibleSpace,
+            
+            // Blinko 操作组
+            NSToolbarItem.Identifier("syncToBlinko"),
+            NSToolbarItem.Identifier("saveToBlinko"),
+            NSToolbarItem.Identifier("createBlinkoFlash")
+        ]
+    }
+    
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        return [
             NSToolbarItem.Identifier("defaultPath"),
             NSToolbarItem.Identifier("newNote"),
             NSToolbarItem.Identifier("selectNote"),
             NSToolbarItem.Identifier("saveContent"),
             NSToolbarItem.Identifier("rewriteContent"),
-            NSToolbarItem.Identifier("syncToBlinko"),  // 添加同步按钮
+            NSToolbarItem.Identifier("syncToBlinko"),
             NSToolbarItem.Identifier("saveToBlinko"),
             NSToolbarItem.Identifier("createBlinkoFlash"),
             .flexibleSpace
         ]
-    }
-    
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        return toolbarDefaultItemIdentifiers(toolbar)
     }
 }
 
@@ -2438,6 +2461,49 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             }
         }
     }
+
+    @objc func handleLocalNoteGroup(_ sender: NSSegmentedControl) {
+        guard let noteWindowController = noteWindowController else { return }
+        
+        switch sender.selectedSegment {
+        case 0:
+            noteWindowController.createNewNote()
+        case 1:
+            noteWindowController.selectNote()
+        case 2:
+            noteWindowController.selectDefaultPath()
+        default:
+            break
+        }
+    }
+
+    @objc func handleContentGroup(_ sender: NSSegmentedControl) {
+        guard let noteWindowController = noteWindowController else { return }
+        
+        switch sender.selectedSegment {
+        case 0:
+            noteWindowController.saveContent()
+        case 1:
+            noteWindowController.rewriteContent()
+        default:
+            break
+        }
+    }
+
+    @objc func handleBlinkoGroup(_ sender: NSSegmentedControl) {
+        guard let noteWindowController = noteWindowController else { return }
+        
+        switch sender.selectedSegment {
+        case 0:
+            noteWindowController.syncToBlinko()
+        case 1:
+            noteWindowController.saveToBlinko()
+        case 2:
+            noteWindowController.createBlinkoFlash()
+        default:
+            break
+        }
+    }
 }
 
 // 修改窗口代理方法
@@ -2451,3 +2517,4 @@ extension AppDelegate: NSWindowDelegate {
     }
 }
 
+    
