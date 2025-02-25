@@ -961,7 +961,6 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
                 let content = contentTextView.string
                 let _ = try await BlinkoManager.shared.createNote(content: content, type: 0)  // type 0 表示闪念
                 await MainActor.run {
-                    updateBlinkoStatus()
                     if let flashButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "createBlinkoFlash" })?.view as? HoverableButton {
                         flashButton.showFeedback("已创建闪念")
                     }
@@ -1107,7 +1106,7 @@ extension NoteWindowController: NSToolbarDelegate {
         case "saveToBlinko":
             item.label = "保存到 Blinko"
             let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
-            button.image = NSImage(systemSymbolName: "square.and.arrow.up.trianglebadge.exclamationmark", accessibilityDescription: nil)
+            button.image = NSImage(systemSymbolName: "arrow.up.doc.fill", accessibilityDescription: nil)
             button.target = self
             button.action = #selector(saveToBlinko)
             button.isBordered = true
@@ -1121,7 +1120,7 @@ extension NoteWindowController: NSToolbarDelegate {
         case "createBlinkoFlash":
             item.label = "新建闪念"
             let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
-            button.image = NSImage(systemSymbolName: "bolt.badge.plus", accessibilityDescription: nil)
+            button.image = NSImage(systemSymbolName: "bolt.circle.fill", accessibilityDescription: nil)
             button.target = self
             button.action = #selector(createBlinkoFlash)
             button.isBordered = true
@@ -1248,6 +1247,7 @@ class BlinkoManager {
             "size": 100,  // 获取前100条笔记
             "orderBy": "desc",
             "type": 1,  // 只获取笔记类型
+            "searchText": "",
             "isArchived": false,
             "isRecycle": false
         ]
