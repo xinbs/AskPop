@@ -1025,6 +1025,55 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
             button.showFeedback("已选择当前笔记")
         }
     }
+
+    // 在 NoteWindowController 类中添加同步方法
+    @objc func syncToBlinko() {
+        // 检查是否有选择本地笔记
+        guard !NoteManager.shared.lastSelectedNote.isEmpty else {
+            if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
+                syncButton.showFeedback("请先选择本地笔记")
+            }
+            return
+        }
+        
+        // 检查是否有选择 Blinko 笔记
+        guard BlinkoManager.shared.lastNoteId > 0 else {
+            if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
+                syncButton.showFeedback("请先选择 Blinko 笔记")
+            }
+            return
+        }
+        
+        // 读取本地笔记内容
+        let url = URL(fileURLWithPath: NoteManager.shared.lastSelectedNote)
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+            if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
+                syncButton.showFeedback("无法读取本地笔记")
+            }
+            return
+        }
+        
+        // 同步到 Blinko
+        Task {
+            do {
+                let _ = try await BlinkoManager.shared.updateNote(
+                    id: BlinkoManager.shared.lastNoteId,
+                    content: content
+                )
+                await MainActor.run {
+                    BlinkoManager.shared.lastNoteTitle = content.components(separatedBy: .newlines).first ?? "无标题"
+                    updateBlinkoStatus()
+                    if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
+                        syncButton.showFeedback("同步成功")
+                    }
+                }
+            } catch {
+                if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
+                    syncButton.showFeedback("同步失败：\(error.localizedDescription)")
+                }
+            }
+        }
+    }
 }
 
 // 添加工具栏代理
@@ -1131,6 +1180,21 @@ extension NoteWindowController: NSToolbarDelegate {
             }
             item.view = button
             
+        case "syncToBlinko":
+            item.label = "同步到 Blinko"
+            let button = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            button.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+            button.target = self
+            button.action = #selector(syncToBlinko)
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.contentTintColor = NSColor.secondaryLabelColor
+            button.hoverHandler = { [weak button] isHovered in
+                button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
+            }
+            button.toolTip = "将本地笔记同步到 Blinko"
+            item.view = button
+            
         default:
             return nil
         }
@@ -1145,6 +1209,7 @@ extension NoteWindowController: NSToolbarDelegate {
             NSToolbarItem.Identifier("selectNote"),
             NSToolbarItem.Identifier("saveContent"),
             NSToolbarItem.Identifier("rewriteContent"),
+            NSToolbarItem.Identifier("syncToBlinko"),  // 添加同步按钮
             NSToolbarItem.Identifier("saveToBlinko"),
             NSToolbarItem.Identifier("createBlinkoFlash"),
             .flexibleSpace
