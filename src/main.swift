@@ -1026,6 +1026,100 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         }
     }
 
+    // 图片处理相关的方法
+    private func convertLocalImagesToBase64(_ markdown: String) -> String {
+        let imagePattern = "!\\[([^\\]]*)\\]\\(([^\\)\"']+)\\)|!\\[([^\\]]*)\\]\\(\"([^\\)]+)\"\\)|!\\[([^\\]]*)\\]\\('([^\\)]+)'\\)"
+        var processedMarkdown = markdown
+        
+        do {
+            let regex = try NSRegularExpression(pattern: imagePattern, options: [])
+            let nsString = markdown as NSString
+            let matches = regex.matches(in: markdown, options: [], range: NSRange(location: 0, length: nsString.length))
+            
+            for match in matches.reversed() {
+                let pathRange = match.range(at: 2).length > 0 ? match.range(at: 2) : 
+                               (match.range(at: 4).length > 0 ? match.range(at: 4) : match.range(at: 6))
+                let imagePath = nsString.substring(with: pathRange)
+                
+                // 检查是否已经是 base64 格式
+                if imagePath.hasPrefix("data:image/") && imagePath.contains(";base64,") {
+                    print("跳过已经是 base64 格式的图片")
+                    continue
+                }
+                
+                var imageFullPath: String? = nil
+                var possiblePaths: [String] = []
+                
+                if imagePath.hasPrefix("/") {
+                    possiblePaths.append(imagePath)
+                } else {
+                    let noteDir = (NoteManager.shared.lastSelectedNote as NSString).deletingLastPathComponent
+                    possiblePaths.append((noteDir as NSString).appendingPathComponent(imagePath))
+                    possiblePaths.append((NoteManager.shared.defaultNotePath as NSString).appendingPathComponent(imagePath))
+                    
+                    let commonImageDirs = ["assets", "images", "img", "resources", "attachments"]
+                    for dir in commonImageDirs {
+                        possiblePaths.append((noteDir as NSString).appendingPathComponent("\(dir)/\(imagePath)"))
+                        possiblePaths.append((NoteManager.shared.defaultNotePath as NSString).appendingPathComponent("\(dir)/\(imagePath)"))
+                    }
+                    
+                    if imagePath.hasPrefix("../") {
+                        let parentPath = (noteDir as NSString).deletingLastPathComponent
+                        possiblePaths.append((parentPath as NSString).appendingPathComponent(String(imagePath.dropFirst(3))))
+                    }
+                }
+                
+                for path in possiblePaths {
+                    if FileManager.default.fileExists(atPath: path) {
+                        imageFullPath = path
+                        break
+                    }
+                }
+                
+                if let fullPath = imageFullPath,
+                   let imageData = try? Data(contentsOf: URL(fileURLWithPath: fullPath)) {
+                    let pathExtension = (fullPath as NSString).pathExtension.lowercased()
+                    let mimeType = getMimeType(for: pathExtension)
+                    
+                    let fileSizeInMB = Double(imageData.count) / 1_000_000.0
+                    if fileSizeInMB > 5.0 {
+                        print("警告：图片 '\(imagePath)' 大小为 \(String(format: "%.1f", fileSizeInMB))MB")
+                    }
+                    
+                    let base64String = imageData.base64EncodedString()
+                    let base64Image = "![](data:\(mimeType);base64,\(base64String))"
+                    
+                    let range = match.range
+                    processedMarkdown = (processedMarkdown as NSString).replacingCharacters(in: range, with: base64Image)
+                    
+                    print("已转换图片：\(imagePath) (大小: \(String(format: "%.1f", fileSizeInMB))MB)")
+                } else {
+                    print("未找到图片或无法读取：\(imagePath)")
+                    if !imagePath.hasPrefix("data:image/") {
+                        print("尝试过的路径：\n\(possiblePaths.joined(separator: "\n"))")
+                    }
+                }
+            }
+        } catch {
+            print("处理图片时出错：\(error)")
+        }
+        
+        return processedMarkdown
+    }
+    
+    private func getMimeType(for extension: String) -> String {
+        let mimeTypes = [
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "webp": "image/webp",
+            "svg": "image/svg+xml",
+            "bmp": "image/bmp"
+        ]
+        return mimeTypes[`extension`.lowercased()] ?? "application/octet-stream"
+    }
+
     // 在 NoteWindowController 类中添加同步方法
     @objc func syncToBlinko() {
         // 检查是否有选择本地笔记
@@ -1053,23 +1147,35 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
             return
         }
         
+        // 先转换图片
+        print("\n开始同步笔记...")
+        print("本地笔记路径：\(NoteManager.shared.lastSelectedNote)")
+        print("Blinko笔记ID：\(BlinkoManager.shared.lastNoteId)")
+        
+        let processedContent = convertLocalImagesToBase64(content)
+        
         // 同步到 Blinko
         Task {
             do {
+                print("开始上传到 Blinko...")
                 let _ = try await BlinkoManager.shared.updateNote(
                     id: BlinkoManager.shared.lastNoteId,
-                    content: content
+                    content: processedContent
                 )
                 await MainActor.run {
-                    BlinkoManager.shared.lastNoteTitle = content.components(separatedBy: .newlines).first ?? "无标题"
+                    BlinkoManager.shared.lastNoteTitle = processedContent.components(separatedBy: .newlines).first ?? "无标题"
                     updateBlinkoStatus()
                     if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
                         syncButton.showFeedback("同步成功")
                     }
+                    print("同步完成！")
                 }
             } catch {
-                if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
-                    syncButton.showFeedback("同步失败：\(error.localizedDescription)")
+                await MainActor.run {
+                    if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
+                        syncButton.showFeedback("同步失败：\(error.localizedDescription)")
+                    }
+                    print("同步失败：\(error.localizedDescription)")
                 }
             }
         }
@@ -1587,7 +1693,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         
         // 创建面板
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 500),
             styleMask: [.titled, .resizable, .fullSizeContentView, .utilityWindow],
             backing: .buffered,
             defer: false
