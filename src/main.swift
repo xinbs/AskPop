@@ -279,6 +279,9 @@ class NoteManager {
 
 // 添加笔记窗口控制器类
 class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+    // 添加属性
+    private var noteTableView: NSTableView?
+    private var noteList: [(id: Int, title: String)] = []
     var defaultPathButton: NSButton!
     var newNoteButton: NSButton!
     var selectNoteButton: NSButton!
@@ -287,10 +290,6 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     var contentTextView: NSTextView!
     var originalText: String = ""
     var blinkoStatusLabel: NSTextField!
-    
-    // 添加表格视图和笔记列表属性
-    private var noteTableView: NSTableView?
-    private var noteList: [(id: Int, title: String)] = []
     
     var aiContent: String = "" {
         didSet {
@@ -305,28 +304,108 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     
     func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? {
         guard row < noteList.count else { return nil }
-        return "#\(noteList[row].id) - \(noteList[row].title)"
-    }
-
-    // 添加表格视图的代理方法
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let identifier = NSUserInterfaceItemIdentifier("NoteCellView")
-        var cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
+        let note = noteList[row]
         
-        if cell == nil {
-            cell = NSTableCellView(frame: NSRect(x: 0, y: 0, width: tableView.frame.width, height: 30))
-            cell?.identifier = identifier
-            
-            let textField = NSTextField(frame: NSRect(x: 5, y: 0, width: tableView.frame.width - 10, height: 30))
-            textField.isEditable = false
-            textField.isBordered = false
-            textField.drawsBackground = false
-            textField.font = NSFont.systemFont(ofSize: 13)
-            cell?.textField = textField
-            cell?.addSubview(textField)
+        // 构建笔记类型标识
+        var typeLabels = ""
+        if note.id == BlinkoManager.shared.syncNoteId {
+            typeLabels += "[同步] "
+        }
+        if note.id == BlinkoManager.shared.defaultNoteId {
+            typeLabels += "[默认] "
+        }
+        if note.id == BlinkoManager.shared.currentNoteId {
+            typeLabels += "[当前] "
         }
         
-        cell?.textField?.stringValue = "#\(noteList[row].id) - \(noteList[row].title)"
+        // 返回带标识的笔记标题
+        return "\(typeLabels)#\(note.id) - \(note.title)"
+    }
+    
+    // 添加表格视图的行高度方法
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        return 30  // 保持原有高度
+    }
+    
+    // 添加表格视图的行视图方法
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row < noteList.count else { return nil }
+        
+        let cellIdentifier = NSUserInterfaceItemIdentifier("NoteCell")
+        var cell = tableView.makeView(withIdentifier: cellIdentifier, owner: nil) as? NSTableCellView
+        
+        if cell == nil {
+            cell = NSTableCellView()
+            cell?.identifier = cellIdentifier
+            
+            let textField = NSTextField()
+            textField.isBordered = false
+            textField.drawsBackground = false
+            textField.isEditable = false
+            textField.font = NSFont.systemFont(ofSize: 12)
+            cell?.textField = textField
+            cell?.addSubview(textField)
+            
+            // 设置文本框约束
+            textField.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                textField.leadingAnchor.constraint(equalTo: cell!.leadingAnchor, constant: 5),
+                textField.trailingAnchor.constraint(equalTo: cell!.trailingAnchor, constant: -5),
+                textField.centerYAnchor.constraint(equalTo: cell!.centerYAnchor)
+            ])
+        }
+        
+        let note = noteList[row]
+        
+        // 构建带标识的笔记标题
+        var typeLabels = ""
+        var attributedString = NSMutableAttributedString()
+        
+        // 添加类型标识
+        if note.id == BlinkoManager.shared.syncNoteId {
+            let syncLabel = NSAttributedString(
+                string: "[同步] ",
+                attributes: [
+                    .foregroundColor: NSColor.systemBlue,
+                    .font: NSFont.boldSystemFont(ofSize: 12)
+                ]
+            )
+            attributedString.append(syncLabel)
+        }
+        
+        if note.id == BlinkoManager.shared.defaultNoteId {
+            let defaultLabel = NSAttributedString(
+                string: "[默认] ",
+                attributes: [
+                    .foregroundColor: NSColor.systemGreen,
+                    .font: NSFont.boldSystemFont(ofSize: 12)
+                ]
+            )
+            attributedString.append(defaultLabel)
+        }
+        
+        if note.id == BlinkoManager.shared.currentNoteId {
+            let currentLabel = NSAttributedString(
+                string: "[当前] ",
+                attributes: [
+                    .foregroundColor: NSColor.systemOrange,
+                    .font: NSFont.boldSystemFont(ofSize: 12)
+                ]
+            )
+            attributedString.append(currentLabel)
+        }
+        
+        // 添加笔记标题
+        let titleString = NSAttributedString(
+            string: "#\(note.id) - \(note.title)",
+            attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 12)
+            ]
+        )
+        attributedString.append(titleString)
+        
+        cell?.textField?.attributedStringValue = attributedString
         return cell
     }
     
@@ -489,19 +568,40 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     }
     
     func updateBlinkoStatus() {
-        let noteId = BlinkoManager.shared.lastNoteId
-        let noteTitle = BlinkoManager.shared.lastNoteTitle
-        if noteId > 0 {
-            blinkoStatusLabel.stringValue = "当前 Blinko 笔记: #\(noteId) - \(noteTitle)"
+        var statusText = ""
+        
+        // 显示同步笔记信息
+        if BlinkoManager.shared.syncNoteId > 0 {
+            statusText += "同步笔记: #\(BlinkoManager.shared.syncNoteId) - \(BlinkoManager.shared.syncNoteTitle)"
         } else {
-            blinkoStatusLabel.stringValue = "未选择 Blinko 笔记"
+            statusText += "未设置同步笔记"
         }
+        
+        statusText += " | "
+        
+        // 显示默认笔记信息
+        if BlinkoManager.shared.defaultNoteId > 0 {
+            statusText += "默认笔记: #\(BlinkoManager.shared.defaultNoteId) - \(BlinkoManager.shared.defaultNoteTitle)"
+        } else {
+            statusText += "未设置默认笔记"
+        }
+        
+        statusText += " | "
+        
+        // 显示当前笔记信息
+        if BlinkoManager.shared.currentNoteId > 0 {
+            statusText += "当前笔记: #\(BlinkoManager.shared.currentNoteId) - \(BlinkoManager.shared.currentNoteTitle)"
+        } else {
+            statusText += "未设置当前笔记"
+        }
+        
+        blinkoStatusLabel.stringValue = statusText
     }
     
     @objc func selectDefaultPath() {
         // 创建设置窗口
         let settingsWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 500),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -561,7 +661,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         blinkoTitle.font = NSFont.boldSystemFont(ofSize: 14)
         contentView.addSubview(blinkoTitle)
         
-        let blinkoDesc = NSTextField(labelWithString: "选择 Blinko 默认笔记或当前工作笔记")
+        let blinkoDesc = NSTextField(labelWithString: "设置同步笔记、默认笔记和当前笔记")
         blinkoDesc.frame = NSRect(x: 20, y: contentView.frame.height - 170, width: 400, height: 20)
         blinkoDesc.font = NSFont.systemFont(ofSize: 12)
         blinkoDesc.textColor = .secondaryLabelColor
@@ -590,7 +690,36 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         scrollView.documentView = tableView
 
         // 创建底部按钮区域
-        let buttonContainer = NSView(frame: NSRect(x: 20, y: 20, width: 460, height: 30))
+        let buttonContainer = NSView(frame: NSRect(x: 20, y: 20, width: 460, height: 70))
+        
+        // 创建笔记设置按钮组
+        let noteSettingsContainer = NSView(frame: NSRect(x: 0, y: 40, width: 460, height: 30))
+        
+        let setSyncButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 100, height: 30))
+        setSyncButton.title = "设为同步笔记"
+        setSyncButton.bezelStyle = .rounded
+        setSyncButton.target = self
+        setSyncButton.action = #selector(setSyncNote(_:))
+        noteSettingsContainer.addSubview(setSyncButton)
+        
+        let setDefaultButton = HoverableButton(frame: NSRect(x: 110, y: 0, width: 100, height: 30))
+        setDefaultButton.title = "设为默认笔记"
+        setDefaultButton.bezelStyle = .rounded
+        setDefaultButton.target = self
+        setDefaultButton.action = #selector(setDefaultNote(_:))
+        noteSettingsContainer.addSubview(setDefaultButton)
+        
+        let setCurrentButton = HoverableButton(frame: NSRect(x: 220, y: 0, width: 100, height: 30))
+        setCurrentButton.title = "设为当前笔记"
+        setCurrentButton.bezelStyle = .rounded
+        setCurrentButton.target = self
+        setCurrentButton.action = #selector(setCurrentNote(_:))
+        noteSettingsContainer.addSubview(setCurrentButton)
+        
+        buttonContainer.addSubview(noteSettingsContainer)
+        
+        // 创建操作按钮组
+        let actionButtonsContainer = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 30))
         
         // 创建刷新按钮
         let refreshButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 70, height: 30))
@@ -598,23 +727,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         refreshButton.bezelStyle = .rounded
         refreshButton.target = self
         refreshButton.action = #selector(refreshNoteList(_:))
-        buttonContainer.addSubview(refreshButton)
-
-        // 创建选择按钮
-        let selectButton = HoverableButton(frame: NSRect(x: 80, y: 0, width: 70, height: 30))
-        selectButton.title = "选择"
-        selectButton.bezelStyle = .rounded
-        selectButton.target = self
-        selectButton.action = #selector(selectCurrentNote(_:))
-        buttonContainer.addSubview(selectButton)
-
-        // 创建重置按钮
-        let resetButton = NSButton(frame: NSRect(x: 160, y: 0, width: 70, height: 30))
-        resetButton.title = "重置"
-        resetButton.bezelStyle = .rounded
-        resetButton.target = self
-        resetButton.action = #selector(resetToDefaultNote(_:))
-        buttonContainer.addSubview(resetButton)
+        actionButtonsContainer.addSubview(refreshButton)
 
         // 创建取消按钮
         let cancelButton = NSButton(frame: NSRect(x: 310, y: 0, width: 70, height: 30))
@@ -622,7 +735,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         cancelButton.bezelStyle = .rounded
         cancelButton.target = self
         cancelButton.action = #selector(closeSettings(_:))
-        buttonContainer.addSubview(cancelButton)
+        actionButtonsContainer.addSubview(cancelButton)
 
         // 创建确定按钮
         let confirmButton = NSButton(frame: NSRect(x: 390, y: 0, width: 70, height: 30))
@@ -630,8 +743,9 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         confirmButton.bezelStyle = .rounded
         confirmButton.target = self
         confirmButton.action = #selector(saveSettings(_:))
-        buttonContainer.addSubview(confirmButton)
-
+        actionButtonsContainer.addSubview(confirmButton)
+        
+        buttonContainer.addSubview(actionButtonsContainer)
         contentView.addSubview(buttonContainer)
 
         // 设置表格视图的数据源和代理
@@ -652,7 +766,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
                     tableView.reloadData()
                     
                     // 选中当前笔记
-                    let currentNoteId = BlinkoManager.shared.lastNoteId
+                    let currentNoteId = BlinkoManager.shared.currentNoteId
                     if currentNoteId > 0 {
                         for (index, note) in notes.enumerated() {
                             if note.id == currentNoteId {
@@ -722,7 +836,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
                     self.noteTableView?.reloadData()
                     
                     // 选中当前笔记
-                    let currentNoteId = BlinkoManager.shared.lastNoteId
+                    let currentNoteId = BlinkoManager.shared.currentNoteId
                     if currentNoteId > 0 {
                         for (index, note) in notes.enumerated() {
                             if note.id == currentNoteId {
@@ -909,41 +1023,62 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         Task {
             do {
                 let content = contentTextView.string
-                let defaultNoteId = BlinkoManager.shared.defaultNoteId
                 
-                if BlinkoManager.shared.lastNoteId > 0 {
-                    // 更新最后使用的笔记
+                // 如果有当前笔记，则更新当前笔记
+                if BlinkoManager.shared.currentNoteId > 0 {
                     let _ = try await BlinkoManager.shared.updateNote(
-                        id: BlinkoManager.shared.lastNoteId,
+                        id: BlinkoManager.shared.currentNoteId,
                         content: content
                     )
                     await MainActor.run {
+                        BlinkoManager.shared.currentNoteTitle = content.components(separatedBy: .newlines).first ?? "无标题"
                         updateBlinkoStatus()
                         if let blinkoButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveToBlinko" })?.view as? HoverableButton {
-                            blinkoButton.showFeedback("已更新到 Blinko")
+                            blinkoButton.showFeedback("已更新到当前笔记")
                         }
                     }
-                } else if defaultNoteId > 0 {
-                    // 更新默认笔记
+                }
+                // 如果没有当前笔记但有默认笔记，则更新默认笔记
+                else if BlinkoManager.shared.defaultNoteId > 0 {
                     let _ = try await BlinkoManager.shared.updateNote(
-                        id: defaultNoteId,
+                        id: BlinkoManager.shared.defaultNoteId,
                         content: content
                     )
                     await MainActor.run {
-                        BlinkoManager.shared.lastNoteId = defaultNoteId
-                        BlinkoManager.shared.lastNoteTitle = content.components(separatedBy: .newlines).first ?? "无标题"
+                        // 将默认笔记设置为当前笔记
+                        BlinkoManager.shared.currentNoteId = BlinkoManager.shared.defaultNoteId
+                        BlinkoManager.shared.currentNoteTitle = content.components(separatedBy: .newlines).first ?? "无标题"
                         updateBlinkoStatus()
                         if let blinkoButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveToBlinko" })?.view as? HoverableButton {
                             blinkoButton.showFeedback("已更新到默认笔记")
                         }
                     }
-                } else {
-                    // 创建新笔记
-                    let _ = try await BlinkoManager.shared.createNote(content: content)
+                }
+                // 如果既没有当前笔记也没有默认笔记，则创建新笔记
+                else {
+                    let note = try await BlinkoManager.shared.createNote(content: content)
                     await MainActor.run {
+                        // 将新创建的笔记设置为当前笔记
+                        BlinkoManager.shared.currentNoteId = note.id
+                        BlinkoManager.shared.currentNoteTitle = note.title
                         updateBlinkoStatus()
                         if let blinkoButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveToBlinko" })?.view as? HoverableButton {
-                            blinkoButton.showFeedback("已保存到 Blinko")
+                            blinkoButton.showFeedback("已创建新笔记")
+                        }
+                    }
+                }
+                
+                // 如果有同步笔记，也更新同步笔记
+                if BlinkoManager.shared.syncNoteId > 0 && BlinkoManager.shared.syncNoteId != BlinkoManager.shared.currentNoteId {
+                    let _ = try await BlinkoManager.shared.updateNote(
+                        id: BlinkoManager.shared.syncNoteId,
+                        content: content
+                    )
+                    await MainActor.run {
+                        BlinkoManager.shared.syncNoteTitle = content.components(separatedBy: .newlines).first ?? "无标题"
+                        updateBlinkoStatus()
+                        if let blinkoButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveToBlinko" })?.view as? HoverableButton {
+                            blinkoButton.showFeedback("已同步到同步笔记")
                         }
                     }
                 }
@@ -1180,6 +1315,69 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
             }
         }
     }
+    
+    @objc func setSyncNote(_ sender: NSButton) {
+        guard let tableView = noteTableView,
+              let selectedRow = tableView.selectedRowIndexes.first,
+              selectedRow < noteList.count else {
+            if let button = sender as? HoverableButton {
+                button.showFeedback("请先选择笔记")
+            }
+            return
+        }
+        
+        let selectedNote = noteList[selectedRow]
+        BlinkoManager.shared.syncNoteId = selectedNote.id
+        BlinkoManager.shared.syncNoteTitle = selectedNote.title
+        
+        // 显示反馈
+        if let button = sender as? HoverableButton {
+            button.showFeedback("已设置为同步笔记")
+        }
+    }
+    
+    @objc func setDefaultNote(_ sender: NSButton) {
+        guard let tableView = noteTableView,
+              let selectedRow = tableView.selectedRowIndexes.first,
+              selectedRow < noteList.count else {
+            if let button = sender as? HoverableButton {
+                button.showFeedback("请先选择笔记")
+            }
+            return
+        }
+        
+        let selectedNote = noteList[selectedRow]
+        BlinkoManager.shared.defaultNoteId = selectedNote.id
+        BlinkoManager.shared.defaultNoteTitle = selectedNote.title
+        
+        // 显示反馈
+        if let button = sender as? HoverableButton {
+            button.showFeedback("已设置为默认笔记")
+        }
+    }
+    
+    @objc func setCurrentNote(_ sender: NSButton) {
+        guard let tableView = noteTableView,
+              let selectedRow = tableView.selectedRowIndexes.first,
+              selectedRow < noteList.count else {
+            if let button = sender as? HoverableButton {
+                button.showFeedback("请先选择笔记")
+            }
+            return
+        }
+        
+        let selectedNote = noteList[selectedRow]
+        BlinkoManager.shared.currentNoteId = selectedNote.id
+        BlinkoManager.shared.currentNoteTitle = selectedNote.title
+        
+        // 更新 UI
+        updateBlinkoStatus()
+        
+        // 显示反馈
+        if let button = sender as? HoverableButton {
+            button.showFeedback("已设置为当前笔记")
+        }
+    }
 }
 
 // 添加工具栏代理
@@ -1375,6 +1573,55 @@ class BlinkoManager {
     // 笔记列表缓存
     private var noteListCache: [(id: Int, title: String)] = []
     
+    // 三种不同的笔记设置
+    var syncNoteId: Int {
+        get { settings["syncNoteId"] as? Int ?? 0 }
+        set {
+            settings["syncNoteId"] = newValue
+            saveSettings()
+        }
+    }
+    
+    var defaultNoteId: Int {
+        get { settings["defaultNoteId"] as? Int ?? 0 }
+        set {
+            settings["defaultNoteId"] = newValue
+            saveSettings()
+        }
+    }
+    
+    var currentNoteId: Int {
+        get { settings["currentNoteId"] as? Int ?? 0 }
+        set {
+            settings["currentNoteId"] = newValue
+            saveSettings()
+        }
+    }
+    
+    var syncNoteTitle: String {
+        get { settings["syncNoteTitle"] as? String ?? "" }
+        set {
+            settings["syncNoteTitle"] = newValue
+            saveSettings()
+        }
+    }
+    
+    var defaultNoteTitle: String {
+        get { settings["defaultNoteTitle"] as? String ?? "" }
+        set {
+            settings["defaultNoteTitle"] = newValue
+            saveSettings()
+        }
+    }
+    
+    var currentNoteTitle: String {
+        get { settings["currentNoteTitle"] as? String ?? "" }
+        set {
+            settings["currentNoteTitle"] = newValue
+            saveSettings()
+        }
+    }
+    
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let appFolder = appSupport.appendingPathComponent("AskPop")
@@ -1406,14 +1653,6 @@ class BlinkoManager {
         get { settings["lastNoteTitle"] as? String ?? "" }
         set {
             settings["lastNoteTitle"] = newValue
-            saveSettings()
-        }
-    }
-    
-    var defaultNoteId: Int {
-        get { settings["defaultNoteId"] as? Int ?? 0 }
-        set {
-            settings["defaultNoteId"] = newValue
             saveSettings()
         }
     }
