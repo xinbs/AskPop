@@ -1265,10 +1265,10 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
             return
         }
         
-        // 检查是否有选择 Blinko 笔记
-        guard BlinkoManager.shared.lastNoteId > 0 else {
+        // 检查是否有设置同步笔记
+        guard BlinkoManager.shared.syncNoteId > 0 else {
             if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
-                syncButton.showFeedback("请先选择 Blinko 笔记")
+                syncButton.showFeedback("请先设置同步笔记")
             }
             return
         }
@@ -1285,7 +1285,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         // 先转换图片
         print("\n开始同步笔记...")
         print("本地笔记路径：\(NoteManager.shared.lastSelectedNote)")
-        print("Blinko笔记ID：\(BlinkoManager.shared.lastNoteId)")
+        print("同步到 Blinko笔记ID：\(BlinkoManager.shared.syncNoteId)")
         
         let processedContent = convertLocalImagesToBase64(content)
         
@@ -1294,11 +1294,11 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
             do {
                 print("开始上传到 Blinko...")
                 let _ = try await BlinkoManager.shared.updateNote(
-                    id: BlinkoManager.shared.lastNoteId,
+                    id: BlinkoManager.shared.syncNoteId,
                     content: processedContent
                 )
                 await MainActor.run {
-                    BlinkoManager.shared.lastNoteTitle = processedContent.components(separatedBy: .newlines).first ?? "无标题"
+                    BlinkoManager.shared.syncNoteTitle = processedContent.components(separatedBy: .newlines).first ?? "无标题"
                     updateBlinkoStatus()
                     if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
                         syncButton.showFeedback("同步成功")
@@ -1631,6 +1631,20 @@ class BlinkoManager {
         apiToken = ProcessInfo.processInfo.environment["POPCLIP_OPTION_BLINKO_TOKEN"] ?? ""
         baseUrl = ProcessInfo.processInfo.environment["POPCLIP_OPTION_BLINKO_BASE_URL"] ?? ""
         
+        // 添加调试日志
+        print("【调试】Blinko 初始化:")
+        print("【调试】环境变量列表:")
+        for (key, value) in ProcessInfo.processInfo.environment {
+            if key.contains("BLINKO") || key.contains("blinko") {
+                print("【调试】\(key): \(value)")
+            }
+        }
+        print("【调试】Blinko Base URL: \(baseUrl)")
+        print("【调试】Blinko Token 是否为空: \(apiToken.isEmpty ? "是" : "否")")
+        if !apiToken.isEmpty {
+            print("【调试】Blinko Token 前5个字符: \(apiToken.prefix(5))...")
+        }
+        
         // 创建应用程序文件夹
         try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true)
         
@@ -1666,6 +1680,7 @@ class BlinkoManager {
     // 获取笔记列表
     func getNoteList() async throws -> [(id: Int, title: String)] {
         guard !apiToken.isEmpty else {
+            print("【调试】getNoteList：API Token 为空")
             throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置 Blinko API Token"])
         }
 
@@ -1674,6 +1689,18 @@ class BlinkoManager {
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // 调试日志：完整请求头
+        print("【调试】请求 URL: \(url.absoluteString)")
+        print("【调试】请求方法: \(request.httpMethod ?? "未知")")
+        print("【调试】请求头:")
+        request.allHTTPHeaderFields?.forEach { key, value in
+            if key.lowercased() == "authorization" {
+                print("【调试】\(key): Bearer [已隐藏Token]")
+            } else {
+                print("【调试】\(key): \(value)")
+            }
+        }
         
         let requestBody: [String: Any] = [
             "page": 1,
@@ -1687,6 +1714,11 @@ class BlinkoManager {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
+        // 调试日志：请求体
+        if let bodyData = request.httpBody, let bodyString = String(data: bodyData, encoding: .utf8) {
+            print("【调试】请求体: \(bodyString)")
+        }
+        
         print("发送请求到 Blinko API: \(url.absoluteString)")
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -1695,6 +1727,17 @@ class BlinkoManager {
         }
         
         print("收到响应状态码: \(httpResponse.statusCode)")
+        
+        // 调试日志：响应头
+        print("【调试】响应头:")
+        (httpResponse.allHeaderFields as? [String: Any])?.forEach { key, value in
+            print("【调试】\(key): \(value)")
+        }
+        
+        // 调试响应内容
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("【调试】响应内容: \(responseString)")
+        }
         
         guard (200...299).contains(httpResponse.statusCode) else {
             // 尝试解析错误响应
