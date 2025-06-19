@@ -1677,6 +1677,20 @@ class BlinkoManager {
         }
     }
     
+    // 构建正确的 API URL，避免路径重复
+    private func buildAPIURL(endpoint: String) -> String {
+        var apiUrl = baseUrl
+        if apiUrl.hasSuffix("/") {
+            apiUrl = String(apiUrl.dropLast())
+        }
+        
+        if apiUrl.hasSuffix("/api/v1") {
+            return "\(apiUrl)/\(endpoint)"
+        } else {
+            return "\(apiUrl)/api/v1/\(endpoint)"
+        }
+    }
+    
     // 获取笔记列表
     func getNoteList() async throws -> [(id: Int, title: String)] {
         guard !apiToken.isEmpty else {
@@ -1684,7 +1698,7 @@ class BlinkoManager {
             throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置 Blinko API Token"])
         }
 
-        let url = URL(string: "\(baseUrl)/api/v1/note/list")!
+        let url = URL(string: buildAPIURL(endpoint: "note/list"))!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
@@ -1782,7 +1796,7 @@ class BlinkoManager {
             throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置 Blinko API Token"])
         }
         
-        let url = URL(string: "\(baseUrl)/api/v1/note/upsert")!
+        let url = URL(string: buildAPIURL(endpoint: "note/upsert"))!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
@@ -1818,7 +1832,7 @@ class BlinkoManager {
             throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置 Blinko API Token"])
         }
         
-        let url = URL(string: "\(baseUrl)/api/v1/note/upsert")!
+        let url = URL(string: buildAPIURL(endpoint: "note/upsert"))!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
