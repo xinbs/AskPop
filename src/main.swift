@@ -1242,7 +1242,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         return processedMarkdown
     }
     
-    private func getMimeType(for extension: String) -> String {
+    private func getMimeType(for fileExtension: String) -> String {
         let mimeTypes = [
             "png": "image/png",
             "jpg": "image/jpeg",
@@ -1252,7 +1252,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
             "svg": "image/svg+xml",
             "bmp": "image/bmp"
         ]
-        return mimeTypes[`extension`.lowercased()] ?? "application/octet-stream"
+        return mimeTypes[fileExtension.lowercased()] ?? "application/octet-stream"
     }
 
     // 在 NoteWindowController 类中添加同步方法
