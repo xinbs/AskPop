@@ -66,7 +66,7 @@
             <key>Height</key>
             <integer>100</integer>
             <key>Default Value</key>
-            <string>你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文，请保留原文中的专业术语、专有名词和缩写，不要进行翻译，仅需翻译，无需解释</string>
+            <string>你是一位专业的中英互译翻译官，先判断需要翻译的文本是中文还是英文，请把中文译成英文，英文译成中文，请保留原文中的专业术语、专有名词和缩写，直接返回翻译后的文本。需要翻译的文本是:</string>
             <key>Description</key>
             <string>AI 翻译功能的提示词</string>
         </dict>
