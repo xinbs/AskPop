@@ -29,6 +29,7 @@ if [ $? -eq 0 ]; then
     cp Extension/Config.plist "$EXTENSION_DIR/"
     cp Extension/run.sh "$EXTENSION_DIR/"
     cp .build/release/AskPop "$EXTENSION_DIR/"
+    cp AskPopLogo.png "$EXTENSION_DIR/"
     
     # 设置权限
     chmod +x "$EXTENSION_DIR/run.sh"

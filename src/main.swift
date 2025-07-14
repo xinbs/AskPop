@@ -4,6 +4,11 @@ import SwiftyJSON
 import WebKit
 import UniformTypeIdentifiers
 
+// 通知名称定义
+extension Notification.Name {
+    static let historyDidUpdate = Notification.Name("historyDidUpdate")
+}
+
 class EditableTextField: NSTextField {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command) {
@@ -136,6 +141,16 @@ class HoverableButton: NSButton {
     private func hideTooltip() {
         tooltipPanel?.close()
         tooltipPanel = nil
+    }
+    
+    // 公开方法供外部调用
+    func clearTooltips() {
+        hideTooltip()
+        feedbackPanel?.close()
+        feedbackPanel = nil
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        NSObject.cancelPreviousPerformRequests(withTarget: self)
     }
     
     func showFeedback(_ text: String) {
@@ -358,8 +373,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         let note = noteList[row]
         
         // 构建带标识的笔记标题
-        var typeLabels = ""
-        var attributedString = NSMutableAttributedString()
+        let attributedString = NSMutableAttributedString()
         
         // 添加类型标识
         if note.id == BlinkoManager.shared.syncNoteId {
@@ -1861,6 +1875,58 @@ class BlinkoManager {
 
 @main
 class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+
+    static func main() {
+        // 检查是否已有实例在运行
+        let lockFilePath = NSTemporaryDirectory() + "AskPop.lock"
+        let lockFileURL = URL(fileURLWithPath: lockFilePath)
+        
+        // 检查命令行参数
+        let arguments = CommandLine.arguments
+        print("Command line arguments: \(arguments)")
+        
+        // 如果有命令行参数，说明是被PopClip调用的
+        if arguments.count > 1 {
+            // 尝试发送通知给已存在的实例
+            let notificationData: [String: Any] = [
+                "prompt": arguments.count > 1 ? arguments[1] : "",
+                "text": arguments.count > 2 ? arguments[2] : "",
+                "timestamp": Date().timeIntervalSince1970
+            ]
+            
+            // 发送分布式通知
+            DistributedNotificationCenter.default().postNotificationName(
+                NSNotification.Name("AskPopShowWindow"),
+                object: nil,
+                userInfo: notificationData,
+                deliverImmediately: true
+            )
+            
+            // 等待一下让通知发送
+            usleep(500000) // 0.5秒
+            
+            // 如果锁文件存在，说明有实例在运行，直接退出
+            if FileManager.default.fileExists(atPath: lockFilePath) {
+                print("Found existing instance, sent notification and exiting")
+                exit(0)
+            }
+            
+            // 如果没有实例在运行，继续启动
+            print("No existing instance found, starting new instance")
+        }
+        
+        // 创建锁文件
+        do {
+            try "AskPop".write(to: lockFileURL, atomically: true, encoding: .utf8)
+            print("Created lock file at: \(lockFilePath)")
+        } catch {
+            print("Failed to create lock file: \(error)")
+        }
+        
+        let delegate = AppDelegate()
+        NSApplication.shared.delegate = delegate
+        NSApplication.shared.run()
+    }
     var window: NSWindow?
     var webView: WKWebView?
     var inputField: NSTextField?
@@ -1882,109 +1948,336 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     // 添加笔记窗口控制器的引用
     var noteWindowController: NoteWindowController?
     
-    static func main() {
-        print("程序启动...")
+    var statusItem: NSStatusItem?
+    var historyWindowController: HistoryWindowController?
+    var currentMode: String = ""
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        print("Application did finish launching.")
+        NSApp.setActivationPolicy(.accessory)
+        print("Activation policy set to .accessory")
+
+        // 注册分布式通知监听
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleShowWindowNotification(_:)),
+            name: NSNotification.Name("AskPopShowWindow"),
+            object: nil
+        )
+        print("Registered for distributed notifications")
+
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        print("Status item created.")
         
-        // 检查命令行参数
-        guard CommandLine.arguments.count >= 3 else {
-            print("用法: AskPop <prompt> <text>")
-            exit(1)
+        if let button = statusItem?.button {
+            // 尝试多种方式加载Logo
+            var image: NSImage?
+            
+            // 方法1: 尝试从Bundle加载
+            if let bundlePath = Bundle.main.path(forResource: "AskPopLogo", ofType: "png") {
+                image = NSImage(byReferencingFile: bundlePath)
+                print("Logo loaded from bundle: \(bundlePath)")
+            }
+            
+            // 方法2: 尝试从可执行文件同目录加载
+            if image == nil {
+                let executablePath = Bundle.main.executablePath ?? ""
+                let executableDir = (executablePath as NSString).deletingLastPathComponent
+                let logoPath = (executableDir as NSString).appendingPathComponent("AskPopLogo.png")
+                image = NSImage(byReferencingFile: logoPath)
+                if image != nil {
+                    print("Logo loaded from executable directory: \(logoPath)")
+                }
+            }
+            
+            // 方法3: 尝试从项目根目录加载（开发时使用）
+            if image == nil {
+                let currentDir = FileManager.default.currentDirectoryPath
+                let logoPath = (currentDir as NSString).appendingPathComponent("AskPopLogo.png")
+                image = NSImage(byReferencingFile: logoPath)
+                if image != nil {
+                    print("Logo loaded from current directory: \(logoPath)")
+                }
+            }
+            
+            if let logoImage = image {
+                // 设置图标为模板图像，这样macOS会自动调整颜色
+                logoImage.isTemplate = true
+                
+                // 设置正确的图标尺寸 - macOS状态栏图标标准尺寸
+                logoImage.size = NSSize(width: 18, height: 18)
+                
+                // 确保图像支持高分辨率显示
+                logoImage.resizingMode = .stretch
+                
+                // 创建一个新的NSImage来确保正确缩放
+                let scaledImage = NSImage(size: NSSize(width: 18, height: 18))
+                scaledImage.lockFocus()
+                logoImage.draw(in: NSRect(x: 0, y: 0, width: 18, height: 18))
+                scaledImage.unlockFocus()
+                scaledImage.isTemplate = true
+                
+                button.image = scaledImage
+                print("Status bar icon set successfully with size: \(scaledImage.size)")
+            } else {
+                button.title = "AskPop"
+                print("Failed to load logo image, using title instead")
+            }
         }
         
-        let app = NSApplication.shared
-        let delegate = AppDelegate()
+        let menu = NSMenu()
+        menu.addItem(withTitle: "问答", action: #selector(showQAWindow), keyEquivalent: "")
+        menu.addItem(withTitle: "翻译", action: #selector(showTranslationWindow), keyEquivalent: "")
+        menu.addItem(withTitle: "历史记录", action: #selector(showHistoryWindow), keyEquivalent: "")
+        menu.addItem(withTitle: "设置", action: #selector(showSettingsWindow), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         
-        // 从 PopClip 环境变量获取配置
-        if let apiKey = ProcessInfo.processInfo.environment["POPCLIP_OPTION_APIKEY"] {
-            print("从 PopClip 获取到 API Key")
-            delegate.apiKey = apiKey
+        statusItem?.menu = menu
+        print("Menu created and assigned to status item.")
+        
+        loadConfig()
+        print("Config loaded.")
+        
+        HistoryManager.shared.loadHistory()
+        print("History loaded.")
+        
+        // 检查命令行参数，如果是通过PopClip启动的，立即显示窗口
+        handleCommandLineArguments()
+    }
+
+    func loadConfig() {
+        // 先从设置文件加载
+        let settings = SettingsManager.shared.settings
+        self.apiKey = settings.apiKey
+        self.apiURL = settings.apiURL
+        self.model = settings.modelName
+        self.temperature = settings.temperature
+
+        // 然后用PopClip环境变量覆盖（如果存在）
+        if let popclipApiKey = ProcessInfo.processInfo.environment["POPCLIP_OPTION_APIKEY"] {
+            self.apiKey = popclipApiKey
         }
-        
-        if let apiUrl = ProcessInfo.processInfo.environment["POPCLIP_OPTION_API_URL"] {
-            delegate.apiURL = apiUrl
+        if let popclipApiUrl = ProcessInfo.processInfo.environment["POPCLIP_OPTION_API_URL"] {
+            self.apiURL = popclipApiUrl
         }
-        
-        if let model = ProcessInfo.processInfo.environment["POPCLIP_OPTION_MODEL"] {
-            delegate.model = model
+        if let popclipModel = ProcessInfo.processInfo.environment["POPCLIP_OPTION_MODEL"] {
+            self.model = popclipModel
         }
-        
         if let tempStr = ProcessInfo.processInfo.environment["POPCLIP_OPTION_TEMPERATURE"],
            let temp = Double(tempStr) {
-            delegate.temperature = temp
+            self.temperature = temp
         }
         
-        // 验证必要的配置
-        if delegate.apiKey.isEmpty {
-            print("错误：未获取到 API Key")
-            exit(1)
+        if apiKey.isEmpty {
+            print("API Key is not set.")
         }
-        
-        app.delegate = delegate
-        
-        // 确保应用程序作为前台应用程序运行
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        
-        app.run()
     }
     
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        print("应用程序已启动...")
-        
-        // 确保应用程序在前台运行
-        NSApp.setActivationPolicy(.regular)
+    // 获取问答提示词：优先使用PopClip传来的，否则使用设置中的
+    func getQAPrompt() -> String {
+        // 如果有PopClip传来的提示词，优先使用
+        if let popclipPrompt = ProcessInfo.processInfo.environment["POPCLIP_OPTION_QA_PROMPT"] {
+            return popclipPrompt
+        }
+        // 否则使用设置中的提示词
+        return SettingsManager.shared.settings.qaPrompt
+    }
+    
+    // 获取翻译提示词：优先使用PopClip传来的，否则使用设置中的
+    func getTranslationPrompt() -> String {
+        // 如果有PopClip传来的提示词，优先使用
+        if let popclipPrompt = ProcessInfo.processInfo.environment["POPCLIP_OPTION_TRANSLATE_PROMPT"] {
+            return popclipPrompt
+        }
+        // 否则使用设置中的提示词
+        return SettingsManager.shared.settings.translatePrompt
+    }
+
+    @objc func showQAWindow() {
+        createWindow(mode: "qa")
+    }
+
+    @objc func showTranslationWindow() {
+        createWindow(mode: "translation")
+    }
+
+    @objc func showHistoryWindow() {
+        if historyWindowController == nil {
+            historyWindowController = HistoryWindowController()
+        }
+        historyWindowController?.showWindow(self)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func showSettingsWindow() {
+        let settingsWindowController = SettingsWindowController.shared
+        // 刷新设置值以显示最新的内容
+        settingsWindowController.refreshSettings()
+        settingsWindowController.showWindow(self)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        // 清理锁文件
+        let lockFilePath = NSTemporaryDirectory() + "AskPop.lock"
+        try? FileManager.default.removeItem(atPath: lockFilePath)
+        print("Cleaned up lock file")
         
-        // 从命令行参数获取提示词和文本
-        let prompt = CommandLine.arguments[1]
-        let encodedText = CommandLine.arguments[2]
-        let text: String
-        if encodedText.hasPrefix("base64:") {
-            let base64String = String(encodedText.dropFirst(7))
+        // 移除分布式通知监听
+        DistributedNotificationCenter.default().removeObserver(self)
+    }
+    
+    @objc func handleShowWindowNotification(_ notification: Notification) {
+        print("Received distributed notification: \(notification)")
+        
+        guard let userInfo = notification.userInfo,
+              let prompt = userInfo["prompt"] as? String,
+              let text = userInfo["text"] as? String else {
+            print("Invalid notification data")
+            return
+        }
+        
+        print("Notification data - prompt: \(prompt), text: \(text)")
+        
+        // 在主线程上处理UI操作
+        DispatchQueue.main.async { [weak self] in
+            self?.processPopClipRequest(prompt: prompt, text: text)
+        }
+    }
+    
+    func handleCommandLineArguments() {
+        let arguments = CommandLine.arguments
+        
+        // 如果有命令行参数，说明是被PopClip调用的
+        if arguments.count > 2 {
+            let prompt = arguments[1]
+            let text = arguments[2]
+            print("Processing command line args - prompt: \(prompt), text: \(text)")
+            processPopClipRequest(prompt: prompt, text: text)
+        }
+    }
+    
+    func processPopClipRequest(prompt: String, text: String) {
+        print("Processing PopClip request with prompt: \(prompt)")
+        
+        // 解码text（如果是base64编码的）
+        var decodedText = text
+        if text.hasPrefix("base64:") {
+            let base64String = String(text.dropFirst(7)) // 移除 "base64:" 前缀
             if let data = Data(base64Encoded: base64String),
-               let decodedText = String(data: data, encoding: .utf8) {
-                text = decodedText
-                print("成功解码 base64 文本")
-            } else {
-                print("错误：无法解码 base64 文本")
-                exit(1)
+               let decoded = String(data: data, encoding: .utf8) {
+                decodedText = decoded
+                print("Decoded base64 text: \(decodedText)")
             }
-        } else {
-            text = encodedText
         }
         
-        systemPrompt = prompt  // 保存系统提示词
-        print("接收到的提示词: \(prompt)")
-        print("接收到的文本: \(text)")
+        // 根据提示词判断模式
+        var mode = "qa"
+        if prompt.contains("翻译") || prompt.contains("translate") || prompt.contains("translator") {
+            mode = "translation"
+        } else if prompt.contains("笔记") || prompt.contains("note") {
+            mode = "note"
+        }
         
-        if !text.isEmpty {
-            // 检查是否是笔记模式
-            if let actionId = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"],
-               actionId == "note_action" {
-                // 笔记模式：直接显示原文，不调用 AI
-                noteWindowController = NoteWindowController(withText: text)
-                noteWindowController?.showWindow(nil)
-            } else {
-                // 普通模式
-                messages = [["role": "system", "content": prompt]]
-                // 检查是否是翻译模式
-                let isTranslateMode = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "translate_action"
-                let messageText = isTranslateMode ? "翻译: \(text)" : text
-                messages.append(["role": "user", "content": messageText])
-                createWindow()
-                // 在 WebView 中显示原始文本（不带前缀）
-                webView?.evaluateJavaScript("""
-                    appendMessage('user', `\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`"))`, false);
-                """)
-                callAPI(withPrompt: "", text: messageText)
+        // 确定最终使用的提示词（优先使用PopClip传来的，但如果是空的或默认的，则使用设置中的）
+        var finalPrompt = prompt
+        if mode == "qa" && (prompt.isEmpty || prompt == "你是一个有用的AI助手，请用中文回答：") {
+            finalPrompt = getQAPrompt()
+        } else if mode == "translation" && (prompt.isEmpty || prompt == "你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文") {
+            finalPrompt = getTranslationPrompt()
+        }
+        
+        print("Determined mode: \(mode), final prompt: \(finalPrompt)")
+        
+        // 如果已有窗口，复用现有窗口；否则创建新窗口
+        if let existingWindow = self.window, existingWindow.isVisible {
+            print("Reusing existing window")
+            // 复用现有窗口，但更新内容
+            self.currentMode = mode
+            
+            // 清除当前对话（可选）
+            self.messages = [["role": "system", "content": finalPrompt]]
+            self.systemPrompt = finalPrompt
+            
+            // 更新输入框内容
+            if let inputField = self.inputField {
+                inputField.stringValue = decodedText
+            }
+            
+            // 清除WebView内容并重新加载空白状态
+            if let webView = self.webView {
+                let emptyHTML = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+                    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+                    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+                    <style>
+                        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 12px; margin: 0; background: transparent; }
+                        .conversation-list { display: flex; flex-direction: column; gap: 4px; }
+                    </style>
+                </head>
+                <body>
+                    <div id="conversation-list" class="conversation-list"></div>
+                    <script>
+                        function appendMessage(role, content) { 
+                            const conversationList = document.getElementById('conversation-list');
+                            const messageDiv = document.createElement('div');
+                            messageDiv.innerHTML = content;
+                            conversationList.appendChild(messageDiv);
+                        }
+                    </script>
+                </body>
+                </html>
+                """
+                webView.loadHTMLString(emptyHTML, baseURL: nil)
+            }
+            
+            // 激活窗口
+            NSApp.activate(ignoringOtherApps: true)
+            existingWindow.makeKeyAndOrderFront(nil)
+            
+            // 自动发送请求
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.sendMessage()
             }
         } else {
-            print("错误：没有接收到文本")
-            NSApp.terminate(nil)
+            print("Creating new window")
+            // 创建新窗口
+            createWindow(mode: mode)
+            
+            // 如果窗口创建成功，自动输入文本并发送请求
+            if let window = self.window, let inputField = self.inputField {
+                // 设置系统提示词
+                self.systemPrompt = finalPrompt
+                self.messages = [["role": "system", "content": finalPrompt]]
+                
+                // 自动输入用户文本
+                inputField.stringValue = decodedText
+                
+                // 激活应用并显示窗口
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+                
+                // 自动发送请求
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.sendMessage()
+                }
+            }
         }
     }
     
-    func createWindow() {
+    func createWindow(mode: String) {
+        self.currentMode = mode
+        
         print("创建窗口...")
         
         // 创建面板
@@ -2004,29 +2297,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
-        //panel.title = "AI助手"
         panel.titlebarAppearsTransparent = true
         panel.backgroundColor = NSColor.windowBackgroundColor
         panel.isMovableByWindowBackground = true
         panel.center()
-        panel.level = .floating  // 默认设置为浮动层级
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary]  // 设置窗口行为
-        panel.hidesOnDeactivate = false  // 失去焦点时不隐藏
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        panel.hidesOnDeactivate = false
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         
-        // 移除左上角的代表性图标
         panel.representedURL = nil
         panel.representedFilename = ""
         panel.isDocumentEdited = false
         
-        // 设置圆角
         panel.contentView?.wantsLayer = true
         panel.contentView?.layer?.cornerRadius = 12
         panel.contentView?.layer?.masksToBounds = true
         
-        // 创建标题栏视觉效果
         let titlebarVisualEffect = NSVisualEffectView(frame: NSRect(x: 0, y: panel.contentView!.frame.height - 30, width: panel.contentView!.frame.width, height: 30))
         titlebarVisualEffect.material = .windowBackground
         titlebarVisualEffect.blendingMode = .behindWindow
@@ -2034,24 +2323,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         titlebarVisualEffect.autoresizingMask = [.width, .minYMargin]
         panel.contentView?.addSubview(titlebarVisualEffect)
         
-        // 创建标题标签
         let titleLabel = NSTextField(frame: NSRect(x: 12, y: 0, width: 200, height: 30))
         
-        // 根据 Action ID 设置不同的标题
         let titleText: String
-        if let actionId = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] {
-            switch actionId {
-            case "translate_action":
-                titleText = "AI助手 - 翻译"
-            case "qa_action":
-                titleText = "AI助手 - 问答"
-            default:
-                titleText = "AI助手"
-            }
-        } else {
+        switch mode {
+        case "qa":
+            titleText = "AI助手 - 问答"
+            systemPrompt = getQAPrompt()
+        case "translation":
+            titleText = "AI助手 - 翻译"
+            systemPrompt = getTranslationPrompt()
+        default:
             titleText = "AI助手"
+            systemPrompt = getQAPrompt()
         }
         titleLabel.stringValue = titleText
+        messages = [["role": "system", "content": systemPrompt]]
+        
         titleLabel.isEditable = false
         titleLabel.isBordered = false
         titleLabel.drawsBackground = false
@@ -2066,14 +2354,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titlebarVisualEffect.addSubview(titleLabel)
         
-        // 添加约束使标题标签垂直居中
         NSLayoutConstraint.activate([
             titleLabel.centerYAnchor.constraint(equalTo: titlebarVisualEffect.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: titlebarVisualEffect.leadingAnchor, constant: 8),
             titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 200)
         ])
         
-        // 在标题栏创建按钮容器，靠近右边
         let titlebarButtonContainer = NSStackView(frame: NSRect(x: titlebarVisualEffect.frame.width - 127, y: 2, width: 129, height: 26))
         titlebarButtonContainer.orientation = .horizontal
         titlebarButtonContainer.spacing = -2
@@ -2083,7 +2369,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         titlebarVisualEffect.addSubview(titlebarButtonContainer)
         self.titlebarButtonContainer = titlebarButtonContainer
         
-        // 创建置顶按钮
         let pinButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 26))
         pinButton.bezelStyle = .inline
         pinButton.isBordered = false
@@ -2105,7 +2390,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         pinButton.toolTip = "置顶窗口"
         titlebarButtonContainer.addArrangedSubview(pinButton)
         
-        // 创建清除按钮
         let clearButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 26))
         clearButton.bezelStyle = .inline
         clearButton.isBordered = false
@@ -2122,7 +2406,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         titlebarButtonContainer.addArrangedSubview(clearButton)
         self.clearButton = clearButton
         
-        // 创建复制按钮
         let copyButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 26))
         copyButton.bezelStyle = .inline
         copyButton.isBordered = false
@@ -2138,7 +2421,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         copyButton.toolTip = "复制对话"
         titlebarButtonContainer.addArrangedSubview(copyButton)
         
-        // 创建关闭按钮
         let closeButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 26))
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
@@ -2607,21 +2889,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
     
     @objc func closeWindow() {
-        NSApplication.shared.terminate(nil)
+        // 清理所有HoverableButton的tooltip
+        if let titlebarButtonContainer = self.titlebarButtonContainer {
+            for subview in titlebarButtonContainer.arrangedSubviews {
+                if let hoverableButton = subview as? HoverableButton {
+                    // 强制隐藏所有tooltip和feedback
+                    hoverableButton.clearTooltips()
+                }
+            }
+        }
+        
+        self.window?.close()
     }
     
     @objc func sendMessage() {
         guard let text = inputField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else { return }
         
-        // 检查是否是翻译模式
-        let isTranslateMode = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "translate_action"
-        let messageText = isTranslateMode ? "翻译: \(text)" : text
+        let messageText: String
+        if self.currentMode == "translation" {
+            messageText = "翻译: \(text)"
+        } else {
+            messageText = text
+        }
         
         messages.append(["role": "user", "content": messageText])
         inputField?.stringValue = ""
         
-        // 立即显示用户消息，但显示原始文本
         if let webView = self.webView {
             let script = """
                 appendMessage('user', `\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`"))`, false);
@@ -2629,21 +2923,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             webView.evaluateJavaScript(script)
         }
         
-        // 使用空提示词调用 API（对话模式）
         callAPI(withPrompt: "", text: messageText)
     }
     
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         print("WebView 加载完成")
-        // WebView 加载完成后，只显示用户消息和 AI 回复
         for message in messages {
-            // 跳过系统提示词
             if message["role"] == "system" { continue }
             
-            // 获取显示文本（如果是翻译模式下的用户消息，移除前缀）
             var displayContent = message["content"] ?? ""
-            if message["role"] == "user" && ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "translate_action" {
-                // 只在翻译模式下移除"翻译: "前缀
+            if message["role"] == "user" && self.currentMode == "translation" {
                 displayContent = displayContent.replacingOccurrences(of: "翻译: ", with: "")
             }
             
@@ -2711,7 +3000,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         // 检查 API key
         guard !apiKey.isEmpty else {
             print("未找到 API 密钥")
-            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Config.plist 中未设置 API 密钥"])
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "请在设置中填写 API 密钥"])
         }
         
         let url = URL(string: apiURL)!
@@ -2908,13 +3197,1198 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 }
 
-// 修改窗口代理方法
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        currentTask?.cancel()  // 取消当前任务
+        currentTask?.cancel()
+        HistoryManager.shared.addEntry(mode: currentMode, messages: messages)
         clearHistory()
+        self.window = nil
+    }
+}
+
+struct HistoryEntry: Codable {
+    let id: UUID
+    let timestamp: Date
+    let mode: String
+    let messages: [[String: String]]
+}
+
+class HistoryManager {
+    static let shared = HistoryManager()
+    private let historyURL: URL
+    private(set) var history: [HistoryEntry] = []
+
+    private init() {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appFolder = appSupport.appendingPathComponent("AskPop")
+        try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true)
+        historyURL = appFolder.appendingPathComponent("history.json")
+    }
+
+    func loadHistory() {
+        if let data = try? Data(contentsOf: historyURL),
+           let loadedHistory = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
+            history = loadedHistory.sorted(by: { $0.timestamp > $1.timestamp })
+        }
+        // 加载完成后立即清理过期记录
+        cleanupOldEntries()
+    }
+
+    func saveHistory() {
+        let sortedHistory = history.sorted(by: { $0.timestamp > $1.timestamp })
+        try? JSONEncoder().encode(sortedHistory).write(to: historyURL)
+    }
+
+    func addEntry(mode: String, messages: [[String: String]]) {
+        if messages.count <= 1 { return } // Don't save empty conversations
+        let entry = HistoryEntry(id: UUID(), timestamp: Date(), mode: mode, messages: messages)
+        history.insert(entry, at: 0)
+        saveHistory()
+        
+        // 通知历史窗口更新
+        NotificationCenter.default.post(name: .historyDidUpdate, object: nil)
+    }
+    
+    func clearHistory() {
+        history.removeAll()
+        saveHistory()
+        
+        // 通知历史窗口更新
+        NotificationCenter.default.post(name: .historyDidUpdate, object: nil)
+    }
+    
+    func deleteEntry(withId id: UUID) {
+        history.removeAll { $0.id == id }
+        saveHistory()
+        
+        // 通知历史窗口更新
+        NotificationCenter.default.post(name: .historyDidUpdate, object: nil)
+    }
+    
+    func cleanupOldEntries() {
+        let settings = SettingsManager.shared.settings
+        guard settings.autoDeleteDays > 0 else { return }
+        
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -settings.autoDeleteDays, to: Date()) ?? Date()
+        let oldCount = history.count
+        
+        history.removeAll { entry in
+            entry.timestamp < cutoffDate
+        }
+        
+        if history.count != oldCount {
+            saveHistory()
+            print("清理了 \(oldCount - history.count) 条过期历史记录")
+        }
+    }
+}
+
+class HistoryWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+    private var tableView: NSTableView!
+    private var detailWebView: WKWebView!
+    private var splitView: NSSplitView!
+    private var searchField: NSSearchField!
+    private var filterButton: NSPopUpButton!
+    private var history: [HistoryEntry] = []
+    private var filteredHistory: [HistoryEntry] = []
+    private var selectedEntry: HistoryEntry?
+
+    convenience init() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.center()
+        window.title = "历史记录"
+        window.minSize = NSSize(width: 800, height: 500)
+        self.init(window: window)
+        setupUI()
+        loadHistory()
+    }
+
+    func setupUI() {
+        guard let contentView = window?.contentView else { return }
+        
+        // 创建工具栏
+        let toolbarView = NSView()
+        toolbarView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(toolbarView)
+        
+        // 搜索框
+        searchField = NSSearchField()
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "搜索对话历史..."
+        searchField.target = self
+        searchField.action = #selector(searchTextChanged)
+        toolbarView.addSubview(searchField)
+        
+        // 过滤按钮
+        filterButton = NSPopUpButton()
+        filterButton.translatesAutoresizingMaskIntoConstraints = false
+        filterButton.addItems(withTitles: ["全部", "问答", "翻译", "笔记"])
+        filterButton.target = self
+        filterButton.action = #selector(filterChanged)
+        toolbarView.addSubview(filterButton)
+        
+        // 清除历史按钮
+        let clearButton = NSButton(title: "清除历史", target: self, action: #selector(clearHistory))
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        clearButton.bezelStyle = .rounded
+        toolbarView.addSubview(clearButton)
+        
+        // 分割视图
+        splitView = NSSplitView()
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        contentView.addSubview(splitView)
+        
+        // 左侧：历史记录列表
+        let leftPanel = NSView()
+        leftPanel.translatesAutoresizingMaskIntoConstraints = false
+        
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        
+        tableView = NSTableView()
+        tableView.gridStyleMask = [.solidHorizontalGridLineMask]
+        tableView.rowHeight = 80
+        tableView.intercellSpacing = NSSize(width: 0, height: 1)
+        tableView.backgroundColor = .clear
+        tableView.selectionHighlightStyle = .none  // 禁用默认选中高亮
+        tableView.allowsEmptySelection = true
+        
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("HistoryColumn"))
+        column.title = "对话历史"
+        column.resizingMask = .autoresizingMask
+        tableView.addTableColumn(column)
+        tableView.headerView = nil
+        tableView.dataSource = self
+        tableView.delegate = self
+        
+        // 添加右键菜单
+        let menu = NSMenu()
+        let deleteItem = NSMenuItem(title: "删除此记录", action: #selector(deleteSelectedItem), keyEquivalent: "")
+        deleteItem.target = self
+        menu.addItem(deleteItem)
+        tableView.menu = menu
+        
+        scrollView.documentView = tableView
+        leftPanel.addSubview(scrollView)
+        
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: leftPanel.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: leftPanel.bottomAnchor)
+        ])
+        
+        // 右侧：对话详情
+        let rightPanel = NSView()
+        rightPanel.translatesAutoresizingMaskIntoConstraints = false
+        
+        // 创建详情视图的WebView
+        let webConfig = WKWebViewConfiguration()
+        detailWebView = WKWebView(frame: .zero, configuration: webConfig)
+        detailWebView.translatesAutoresizingMaskIntoConstraints = false
+        detailWebView.setValue(false, forKey: "drawsBackground")
+        rightPanel.addSubview(detailWebView)
+        
+        NSLayoutConstraint.activate([
+            detailWebView.topAnchor.constraint(equalTo: rightPanel.topAnchor),
+            detailWebView.leadingAnchor.constraint(equalTo: rightPanel.leadingAnchor),
+            detailWebView.trailingAnchor.constraint(equalTo: rightPanel.trailingAnchor),
+            detailWebView.bottomAnchor.constraint(equalTo: rightPanel.bottomAnchor)
+        ])
+        
+        // 添加面板到分割视图
+        splitView.addArrangedSubview(leftPanel)
+        splitView.addArrangedSubview(rightPanel)
+        
+        // 设置分割视图比例
+        splitView.setHoldingPriority(NSLayoutConstraint.Priority(250), forSubviewAt: 0)
+        splitView.setHoldingPriority(NSLayoutConstraint.Priority(250), forSubviewAt: 1)
+        
+        // 布局约束
+        NSLayoutConstraint.activate([
+            // 工具栏
+            toolbarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            toolbarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            toolbarView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            toolbarView.heightAnchor.constraint(equalToConstant: 30),
+            
+            // 工具栏内容
+            searchField.leadingAnchor.constraint(equalTo: toolbarView.leadingAnchor),
+            searchField.centerYAnchor.constraint(equalTo: toolbarView.centerYAnchor),
+            searchField.widthAnchor.constraint(equalToConstant: 200),
+            
+            filterButton.leadingAnchor.constraint(equalTo: searchField.trailingAnchor, constant: 10),
+            filterButton.centerYAnchor.constraint(equalTo: toolbarView.centerYAnchor),
+            filterButton.widthAnchor.constraint(equalToConstant: 80),
+            
+            clearButton.trailingAnchor.constraint(equalTo: toolbarView.trailingAnchor),
+            clearButton.centerYAnchor.constraint(equalTo: toolbarView.centerYAnchor),
+            
+            // 分割视图
+            splitView.topAnchor.constraint(equalTo: toolbarView.bottomAnchor, constant: 10),
+            splitView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            splitView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            splitView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
+            
+            // 左侧面板最小宽度
+            leftPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 220)
+        ])
+        
+        // 设置初始分割比例
         DispatchQueue.main.async {
-            NSApp.terminate(nil)  // 确保在主线程中终止应用
+            self.splitView.setPosition(260, ofDividerAt: 0)
+        }
+        
+        // 加载空白状态
+        loadEmptyDetailView()
+        
+        // 监听历史记录更新通知
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(historyDidUpdate),
+            name: .historyDidUpdate,
+            object: nil
+        )
+    }
+    
+    @objc func historyDidUpdate() {
+        DispatchQueue.main.async {
+            self.loadHistory()
+        }
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func loadHistory() {
+        self.history = HistoryManager.shared.history
+        self.filteredHistory = self.history
+        tableView.reloadData()
+    }
+    
+    @objc func searchTextChanged() {
+        filterHistory()
+    }
+    
+    @objc func filterChanged() {
+        filterHistory()
+    }
+    
+    @objc func deleteSelectedItem() {
+        let selectedRow = tableView.selectedRow
+        guard selectedRow >= 0 && selectedRow < filteredHistory.count else { return }
+        
+        let entry = filteredHistory[selectedRow]
+        
+        let alert = NSAlert()
+        alert.messageText = "确认删除此记录"
+        alert.informativeText = "此操作将删除选中的对话记录，且无法恢复。"
+        alert.addButton(withTitle: "确认")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .warning
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            HistoryManager.shared.deleteEntry(withId: entry.id)
+        }
+    }
+    
+    @objc func clearHistory() {
+        let alert = NSAlert()
+        alert.messageText = "确认清除历史记录"
+        alert.informativeText = "此操作将删除所有对话历史记录，且无法恢复。"
+        alert.addButton(withTitle: "确认")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .warning
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            HistoryManager.shared.clearHistory()
+            loadHistory()
+            loadEmptyDetailView()
+        }
+    }
+    
+    func filterHistory() {
+        let searchText = searchField.stringValue.lowercased()
+        let selectedFilter = filterButton.indexOfSelectedItem
+        
+        filteredHistory = history.filter { entry in
+            // 过滤模式
+            var matchesFilter = true
+            switch selectedFilter {
+            case 1: matchesFilter = entry.mode == "qa"
+            case 2: matchesFilter = entry.mode == "translation"  
+            case 3: matchesFilter = entry.mode == "note"
+            default: matchesFilter = true
+            }
+            
+            // 搜索文本
+            var matchesSearch = true
+            if !searchText.isEmpty {
+                let allContent = entry.messages.compactMap { $0["content"] }.joined(separator: " ").lowercased()
+                matchesSearch = allContent.contains(searchText)
+            }
+            
+            return matchesFilter && matchesSearch
+        }
+        
+        tableView.reloadData()
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        return filteredHistory.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let entry = filteredHistory[row]
+        let cellIdentifier = NSUserInterfaceItemIdentifier("HistoryCell")
+        
+        var cell = tableView.makeView(withIdentifier: cellIdentifier, owner: nil)
+        if cell == nil {
+            cell = createHistoryCell()
+            cell?.identifier = cellIdentifier
+        }
+        
+        updateHistoryCell(cell!, with: entry)
+        return cell
+    }
+    
+    func createHistoryCell() -> NSView {
+        let cell = NSView()
+        cell.wantsLayer = true
+        cell.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        cell.layer?.cornerRadius = 6
+        
+        // 创建一个容器视图来避免选中高亮影响文字显示
+        let containerView = NSView()
+        containerView.wantsLayer = true
+        containerView.layer?.backgroundColor = NSColor.clear.cgColor
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(containerView)
+        
+        // 模式标签
+        let modeLabel = NSTextField()
+        modeLabel.identifier = NSUserInterfaceItemIdentifier("modeLabel")
+        modeLabel.isEditable = false
+        modeLabel.isBordered = false
+        modeLabel.backgroundColor = .clear
+        modeLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+        modeLabel.textColor = .white
+        modeLabel.alignment = .center
+        modeLabel.wantsLayer = true
+        modeLabel.layer?.cornerRadius = 8
+        modeLabel.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(modeLabel)
+        
+        // 时间标签
+        let timeLabel = NSTextField()
+        timeLabel.identifier = NSUserInterfaceItemIdentifier("timeLabel")
+        timeLabel.isEditable = false
+        timeLabel.isBordered = false
+        timeLabel.backgroundColor = .clear
+        timeLabel.font = NSFont.systemFont(ofSize: 9, weight: .regular)
+        timeLabel.textColor = .secondaryLabelColor
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(timeLabel)
+        
+        // 预览标签
+        let previewLabel = NSTextField()
+        previewLabel.identifier = NSUserInterfaceItemIdentifier("previewLabel")
+        previewLabel.isEditable = false
+        previewLabel.isBordered = false
+        previewLabel.backgroundColor = .clear
+        previewLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        previewLabel.textColor = .labelColor
+        previewLabel.lineBreakMode = .byTruncatingTail
+        previewLabel.maximumNumberOfLines = 2
+        previewLabel.cell?.wraps = true
+        previewLabel.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(previewLabel)
+        
+        NSLayoutConstraint.activate([
+            // 容器视图约束 - 填满整个cell
+            containerView.topAnchor.constraint(equalTo: cell.topAnchor),
+            containerView.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+            containerView.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
+            containerView.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
+            
+            // 模式标签 - 左上角小徽章
+            modeLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 6),
+            modeLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 8),
+            modeLabel.widthAnchor.constraint(equalToConstant: 32),
+            modeLabel.heightAnchor.constraint(equalToConstant: 16),
+            
+            // 时间标签 - 右上角
+            timeLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 6),
+            timeLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),
+            timeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: modeLabel.trailingAnchor, constant: 4),
+            
+            // 预览文本 - 下方两行
+            previewLabel.topAnchor.constraint(equalTo: modeLabel.bottomAnchor, constant: 4),
+            previewLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 8),
+            previewLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),
+            previewLabel.bottomAnchor.constraint(lessThanOrEqualTo: containerView.bottomAnchor, constant: -6)
+        ])
+        
+        return cell
+    }
+    
+    func updateHistoryCell(_ cell: NSView, with entry: HistoryEntry) {
+        // 找到容器视图
+        guard let containerView = cell.subviews.first,
+              let modeLabel = containerView.subviews.first(where: { $0.identifier?.rawValue == "modeLabel" }) as? NSTextField,
+              let timeLabel = containerView.subviews.first(where: { $0.identifier?.rawValue == "timeLabel" }) as? NSTextField,
+              let previewLabel = containerView.subviews.first(where: { $0.identifier?.rawValue == "previewLabel" }) as? NSTextField else {
+            return
+        }
+        
+        // 设置模式标签
+        switch entry.mode {
+        case "qa":
+            modeLabel.stringValue = "问答"
+            modeLabel.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        case "translation":
+            modeLabel.stringValue = "翻译"
+            modeLabel.layer?.backgroundColor = NSColor.systemGreen.cgColor
+        case "note":
+            modeLabel.stringValue = "笔记"
+            modeLabel.layer?.backgroundColor = NSColor.systemOrange.cgColor
+        default:
+            modeLabel.stringValue = "其他"
+            modeLabel.layer?.backgroundColor = NSColor.systemGray.cgColor
+        }
+        
+        // 设置时间
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .short
+        dateFormatter.timeStyle = .short
+        timeLabel.stringValue = dateFormatter.string(from: entry.timestamp)
+        
+        // 设置预览文本
+        let userMessage = entry.messages.first(where: { $0["role"] == "user" })?["content"] ?? ""
+        let preview = userMessage.count > 100 ? String(userMessage.prefix(100)) + "..." : userMessage
+        previewLabel.stringValue = preview.isEmpty ? "空对话" : preview
+    }
+    
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        return 50  // 设置固定行高为50像素
+    }
+    
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let selectedRow = tableView.selectedRow
+        
+        // 更新所有cell的选中状态显示
+        for i in 0..<tableView.numberOfRows {
+            if let cell = tableView.view(atColumn: 0, row: i, makeIfNecessary: false) {
+                updateCellSelection(cell, isSelected: i == selectedRow)
+            }
+        }
+        
+        if selectedRow >= 0 && selectedRow < filteredHistory.count {
+            selectedEntry = filteredHistory[selectedRow]
+            loadDetailView(for: selectedEntry!)
+        } else {
+            selectedEntry = nil
+            loadEmptyDetailView()
+        }
+    }
+    
+    func updateCellSelection(_ cell: NSView, isSelected: Bool) {
+        // 更新cell的选中状态外观
+        if isSelected {
+            cell.layer?.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.1).cgColor
+        } else {
+            cell.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        }
+    }
+    
+    func loadDetailView(for entry: HistoryEntry) {
+        let html = generateDetailHTML(for: entry)
+        detailWebView.loadHTMLString(html, baseURL: nil)
+    }
+    
+    func loadEmptyDetailView() {
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    margin: 0;
+                    padding: 40px;
+                    text-align: center;
+                    color: #888;
+                    background: transparent;
+                }
+                .empty-state {
+                    margin-top: 100px;
+                }
+                .empty-icon {
+                    font-size: 64px;
+                    margin-bottom: 20px;
+                }
+                h2 {
+                    color: #666;
+                    font-weight: 300;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="empty-state">
+                <div class="empty-icon">💬</div>
+                <h2>选择一个对话查看详细内容</h2>
+                <p>点击左侧的历史记录以查看完整对话</p>
+            </div>
+        </body>
+        </html>
+        """
+        detailWebView.loadHTMLString(html, baseURL: nil)
+    }
+    
+    func generateDetailHTML(for entry: HistoryEntry) -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .full
+        dateFormatter.timeStyle = .medium
+        let dateString = dateFormatter.string(from: entry.timestamp)
+        
+        let modeString = entry.mode == "qa" ? "问答" : (entry.mode == "translation" ? "翻译" : "笔记")
+        let modeColor = entry.mode == "qa" ? "#007AFF" : (entry.mode == "translation" ? "#34C759" : "#FF9500")
+        
+        var messagesHTML = ""
+        for message in entry.messages {
+            guard let role = message["role"], let content = message["content"] else { continue }
+            
+            if role == "system" { continue } // 跳过系统消息
+            
+            let isUser = role == "user"
+            let roleText = isUser ? "用户" : "AI助手"
+            let roleColor = isUser ? "#007AFF" : "#34C759"
+            let alignClass = isUser ? "user-message" : "ai-message"
+            
+            // 处理内容中的换行和特殊字符
+            let escapedContent = content
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\n", with: "<br>")
+            
+            messagesHTML += """
+            <div class="message \(alignClass)">
+                <div class="message-header">
+                    <span class="role" style="color: \(roleColor);">\(roleText)</span>
+                </div>
+                <div class="message-content">\(escapedContent)</div>
+            </div>
+            """
+        }
+        
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    line-height: 1.6;
+                    margin: 0;
+                    padding: 20px;
+                    background: transparent;
+                    color: #333;
+                }
+                .header {
+                    border-bottom: 1px solid #eee;
+                    padding-bottom: 15px;
+                    margin-bottom: 20px;
+                }
+                .mode-badge {
+                    display: inline-block;
+                    background: \(modeColor);
+                    color: white;
+                    padding: 4px 12px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                    font-weight: 500;
+                    margin-bottom: 10px;
+                }
+                .date {
+                    color: #666;
+                    font-size: 14px;
+                }
+                .messages {
+                    max-width: 100%;
+                }
+                .message {
+                    margin-bottom: 20px;
+                    padding: 15px;
+                    border-radius: 12px;
+                    max-width: 80%;
+                }
+                .user-message {
+                    background: #E3F2FD;
+                    margin-left: auto;
+                    text-align: right;
+                }
+                .ai-message {
+                    background: #F1F8E9;
+                    margin-right: auto;
+                }
+                .message-header {
+                    font-size: 12px;
+                    font-weight: 600;
+                    margin-bottom: 8px;
+                }
+                .message-content {
+                    font-size: 14px;
+                    word-wrap: break-word;
+                }
+                .role {
+                    font-weight: 600;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <div class="mode-badge">\(modeString)</div>
+                <div class="date">\(dateString)</div>
+            </div>
+            <div class="messages">
+                \(messagesHTML)
+            </div>
+        </body>
+        </html>
+        """
+    }
+}
+
+struct AppSettings: Codable {
+    var apiKey: String
+    var apiURL: String
+    var autoDeleteDays: Int = 0 // 自动删除天数，0表示不自动删除
+    var modelName: String = "gpt-3.5-turbo"
+    var temperature: Double = 0.7
+    var qaPrompt: String = "你是一个有用的AI助手，请用中文回答："
+    var translatePrompt: String = "你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文"
+}
+
+class SettingsManager {
+    static let shared = SettingsManager()
+    private let settingsURL: URL
+    var settings: AppSettings
+
+    private init() {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appFolder = appSupport.appendingPathComponent("AskPop")
+        try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true)
+        settingsURL = appFolder.appendingPathComponent("settings.json")
+
+        if let data = try? Data(contentsOf: settingsURL),
+           let loadedSettings = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            settings = loadedSettings
+        } else {
+            settings = AppSettings(
+                apiKey: "", 
+                apiURL: "https://aihubmix.com/v1/chat/completions",
+                autoDeleteDays: 0,
+                modelName: "gpt-3.5-turbo",
+                temperature: 0.7,
+                qaPrompt: "你是一个有用的AI助手，请用中文回答：",
+                translatePrompt: "你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文"
+            )
+        }
+    }
+
+    func saveSettings() throws {
+        let data = try JSONEncoder().encode(settings)
+        try data.write(to: settingsURL)
+    }
+    
+    @discardableResult
+    func saveSettingsWithResult() -> Bool {
+        do {
+            try saveSettings()
+            return true
+        } catch {
+            print("保存设置失败: \(error)")
+            return false
+        }
+    }
+}
+
+class SettingsWindowController: NSWindowController {
+    static let shared = SettingsWindowController()
+    
+    private var apiKeyField: EditableTextField!
+    private var apiURLField: EditableTextField!
+    private var autoDeletePopUp: NSPopUpButton!
+    private var modelField: EditableTextField!
+    private var temperatureField: EditableTextField!
+    private var qaPromptField: EditableTextField!
+    private var translatePromptField: EditableTextField!
+
+    private init() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 550),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.center()
+        window.title = "AskPop 设置"
+        window.minSize = NSSize(width: 600, height: 550)
+        
+        // 设置现代化的窗口外观
+        window.titlebarAppearsTransparent = false
+        window.backgroundColor = NSColor.windowBackgroundColor
+        
+        super.init(window: window)
+        setupUI()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setupUI() {
+        let contentView = NSView(frame: window!.contentView!.bounds)
+        contentView.autoresizingMask = [.width, .height]
+        
+        // 添加背景视觉效果
+        let backgroundView = NSVisualEffectView(frame: contentView.bounds)
+        backgroundView.material = .windowBackground
+        backgroundView.blendingMode = .behindWindow
+        backgroundView.state = .active
+        backgroundView.autoresizingMask = [.width, .height]
+        contentView.addSubview(backgroundView)
+
+        // 每次都重新获取最新的设置值
+        let settings = SettingsManager.shared.settings
+        
+        // 创建滚动视图来支持更多内容
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 80, width: contentView.frame.width, height: contentView.frame.height - 80))
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        scrollView.autohidesScrollers = true
+        contentView.addSubview(scrollView)
+        
+        let documentView = NSView(frame: NSRect(x: 0, y: 0, width: max(600, scrollView.contentSize.width), height: 700))
+        documentView.autoresizingMask = [.width]
+        scrollView.documentView = documentView
+        
+        let margin: CGFloat = 30
+        let labelWidth: CGFloat = 140
+        let fieldWidth: CGFloat = 400
+        let rowHeight: CGFloat = 90
+        let sectionGap: CGFloat = 40
+        var currentY: CGFloat = documentView.frame.height - 30
+        
+        // 标题
+        let titleLabel = NSTextField(labelWithString: "AskPop 配置设置")
+        titleLabel.frame = NSRect(x: margin, y: currentY, width: 300, height: 28)
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 22)
+        titleLabel.textColor = .labelColor
+        documentView.addSubview(titleLabel)
+        currentY -= 40
+        
+        // API 配置分组
+        let apiGroupLabel = NSTextField(labelWithString: "API 配置")
+        apiGroupLabel.frame = NSRect(x: margin, y: currentY, width: 200, height: 20)
+        apiGroupLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        apiGroupLabel.textColor = .secondaryLabelColor
+        documentView.addSubview(apiGroupLabel)
+        currentY -= 30
+        
+        // API Key
+        let apiKeyLabel = NSTextField(labelWithString: "API Key:")
+        apiKeyLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
+        apiKeyLabel.font = NSFont.systemFont(ofSize: 14)
+        documentView.addSubview(apiKeyLabel)
+        
+        let apiKeyDesc = NSTextField(labelWithString: "OpenAI 或其他兼容服务的 API 密钥")
+        apiKeyDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
+        apiKeyDesc.font = NSFont.systemFont(ofSize: 11)
+        apiKeyDesc.textColor = .tertiaryLabelColor
+        documentView.addSubview(apiKeyDesc)
+
+        apiKeyField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
+        apiKeyField.stringValue = settings.apiKey
+        apiKeyField.placeholderString = "请输入您的 API Key"
+        apiKeyField.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        apiKeyField.bezelStyle = .roundedBezel
+        apiKeyField.autoresizingMask = [.width]
+        apiKeyField.alignment = .left
+        documentView.addSubview(apiKeyField)
+        currentY -= rowHeight
+
+        // API URL
+        let apiURLLabel = NSTextField(labelWithString: "API URL:")
+        apiURLLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
+        apiURLLabel.font = NSFont.systemFont(ofSize: 14)
+        documentView.addSubview(apiURLLabel)
+        
+        let apiURLDesc = NSTextField(labelWithString: "API 服务的完整地址")
+        apiURLDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
+        apiURLDesc.font = NSFont.systemFont(ofSize: 11)
+        apiURLDesc.textColor = .tertiaryLabelColor
+        documentView.addSubview(apiURLDesc)
+
+        apiURLField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
+        apiURLField.stringValue = settings.apiURL
+        apiURLField.placeholderString = "https://api.openai.com/v1/chat/completions"
+        apiURLField.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        apiURLField.bezelStyle = .roundedBezel
+        apiURLField.autoresizingMask = [.width]
+        apiURLField.alignment = .left
+        documentView.addSubview(apiURLField)
+        currentY -= sectionGap
+
+        // 模型配置分组
+        let modelGroupLabel = NSTextField(labelWithString: "模型配置")
+        modelGroupLabel.frame = NSRect(x: margin, y: currentY, width: 200, height: 20)
+        modelGroupLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        modelGroupLabel.textColor = .secondaryLabelColor
+        documentView.addSubview(modelGroupLabel)
+        currentY -= 30
+
+        // Model
+        let modelLabel = NSTextField(labelWithString: "AI 模型:")
+        modelLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
+        modelLabel.font = NSFont.systemFont(ofSize: 14)
+        documentView.addSubview(modelLabel)
+        
+        let modelDesc = NSTextField(labelWithString: "使用的 AI 模型名称")
+        modelDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
+        modelDesc.font = NSFont.systemFont(ofSize: 11)
+        modelDesc.textColor = .tertiaryLabelColor
+        documentView.addSubview(modelDesc)
+
+        modelField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
+        modelField.stringValue = settings.modelName
+        modelField.placeholderString = "gpt-3.5-turbo, gpt-4, deepseek-chat"
+        modelField.font = NSFont.systemFont(ofSize: 14)
+        modelField.bezelStyle = .roundedBezel
+        modelField.autoresizingMask = [.width]
+        modelField.alignment = .left
+        documentView.addSubview(modelField)
+        currentY -= rowHeight
+
+        // Temperature
+        let temperatureLabel = NSTextField(labelWithString: "创造性温度:")
+        temperatureLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
+        temperatureLabel.font = NSFont.systemFont(ofSize: 14)
+        documentView.addSubview(temperatureLabel)
+        
+        let temperatureDesc = NSTextField(labelWithString: "控制回答的随机性，0.0-2.0，越高越有创意")
+        temperatureDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
+        temperatureDesc.font = NSFont.systemFont(ofSize: 11)
+        temperatureDesc.textColor = .tertiaryLabelColor
+        documentView.addSubview(temperatureDesc)
+
+        temperatureField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: 150, height: 44))
+        temperatureField.stringValue = String(settings.temperature)
+        temperatureField.placeholderString = "0.7"
+        temperatureField.font = NSFont.systemFont(ofSize: 14)
+        temperatureField.bezelStyle = .roundedBezel
+        temperatureField.alignment = .center
+        documentView.addSubview(temperatureField)
+        currentY -= sectionGap
+
+        // 提示词配置分组
+        let promptGroupLabel = NSTextField(labelWithString: "提示词配置")
+        promptGroupLabel.frame = NSRect(x: margin, y: currentY, width: 200, height: 20)
+        promptGroupLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        promptGroupLabel.textColor = .secondaryLabelColor
+        documentView.addSubview(promptGroupLabel)
+        currentY -= 30
+
+        // Q&A Prompt
+        let qaPromptLabel = NSTextField(labelWithString: "问答提示词:")
+        qaPromptLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
+        qaPromptLabel.font = NSFont.systemFont(ofSize: 14)
+        documentView.addSubview(qaPromptLabel)
+        
+        let qaPromptDesc = NSTextField(labelWithString: "问答模式的系统提示词")
+        qaPromptDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
+        qaPromptDesc.font = NSFont.systemFont(ofSize: 11)
+        qaPromptDesc.textColor = .tertiaryLabelColor
+        documentView.addSubview(qaPromptDesc)
+
+        qaPromptField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
+        qaPromptField.stringValue = settings.qaPrompt
+        qaPromptField.placeholderString = "你是一个有用的AI助手，请用中文回答："
+        qaPromptField.font = NSFont.systemFont(ofSize: 14)
+        qaPromptField.bezelStyle = .roundedBezel
+        qaPromptField.autoresizingMask = [.width]
+        qaPromptField.alignment = .left
+        documentView.addSubview(qaPromptField)
+        currentY -= rowHeight
+
+        // Translation Prompt
+        let translatePromptLabel = NSTextField(labelWithString: "翻译提示词:")
+        translatePromptLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
+        translatePromptLabel.font = NSFont.systemFont(ofSize: 14)
+        documentView.addSubview(translatePromptLabel)
+        
+        let translatePromptDesc = NSTextField(labelWithString: "翻译模式的系统提示词")
+        translatePromptDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
+        translatePromptDesc.font = NSFont.systemFont(ofSize: 11)
+        translatePromptDesc.textColor = .tertiaryLabelColor
+        documentView.addSubview(translatePromptDesc)
+
+        translatePromptField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
+        translatePromptField.stringValue = settings.translatePrompt
+        translatePromptField.placeholderString = "你是一位专业的中英互译翻译官"
+        translatePromptField.font = NSFont.systemFont(ofSize: 14)
+        translatePromptField.bezelStyle = .roundedBezel
+        translatePromptField.autoresizingMask = [.width]
+        translatePromptField.alignment = .left
+        documentView.addSubview(translatePromptField)
+        currentY -= sectionGap
+
+        // 历史记录配置分组
+        let historyGroupLabel = NSTextField(labelWithString: "历史记录管理")
+        historyGroupLabel.frame = NSRect(x: margin, y: currentY, width: 200, height: 20)
+        historyGroupLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        historyGroupLabel.textColor = .secondaryLabelColor
+        documentView.addSubview(historyGroupLabel)
+        currentY -= 30
+
+        // Auto Delete
+        let autoDeleteLabel = NSTextField(labelWithString: "自动删除:")
+        autoDeleteLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
+        autoDeleteLabel.font = NSFont.systemFont(ofSize: 14)
+        documentView.addSubview(autoDeleteLabel)
+        
+        let autoDeleteDesc = NSTextField(labelWithString: "自动删除过期的历史记录")
+        autoDeleteDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
+        autoDeleteDesc.font = NSFont.systemFont(ofSize: 11)
+        autoDeleteDesc.textColor = .tertiaryLabelColor
+        documentView.addSubview(autoDeleteDesc)
+
+        autoDeletePopUp = NSPopUpButton(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 3, width: 200, height: 26))
+        autoDeletePopUp.addItems(withTitles: [
+            "不自动删除",
+            "7天后删除",
+            "15天后删除", 
+            "30天后删除",
+            "3个月后删除",
+            "6个月后删除"
+        ])
+        autoDeletePopUp.bezelStyle = .rounded
+        autoDeletePopUp.font = NSFont.systemFont(ofSize: 13)
+        
+        // 设置当前选择
+        let currentDays = settings.autoDeleteDays
+        switch currentDays {
+        case 0: autoDeletePopUp.selectItem(at: 0)
+        case 7: autoDeletePopUp.selectItem(at: 1)
+        case 15: autoDeletePopUp.selectItem(at: 2)
+        case 30: autoDeletePopUp.selectItem(at: 3)
+        case 90: autoDeletePopUp.selectItem(at: 4)
+        case 180: autoDeletePopUp.selectItem(at: 5)
+        default: autoDeletePopUp.selectItem(at: 0)
+        }
+        
+        documentView.addSubview(autoDeletePopUp)
+
+        // 底部按钮区域
+        let buttonContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentView.frame.width, height: 80))
+        buttonContainer.autoresizingMask = [.width]
+        contentView.addSubview(buttonContainer)
+        
+        // 分隔线
+        let separator = NSBox(frame: NSRect(x: 0, y: 79, width: buttonContainer.frame.width, height: 1))
+        separator.boxType = .separator
+        separator.autoresizingMask = [.width]
+        buttonContainer.addSubview(separator)
+
+        // Save Button
+        let saveButton = HoverableButton()
+        saveButton.title = "保存设置"
+        saveButton.target = self
+        saveButton.action = #selector(saveSettings)
+        saveButton.frame = NSRect(x: buttonContainer.frame.width - 140, y: 25, width: 120, height: 32)
+        saveButton.autoresizingMask = [.minXMargin]
+        saveButton.bezelStyle = .rounded
+        saveButton.keyEquivalent = "\r"  // 支持回车键保存
+        saveButton.toolTip = "保存所有设置并应用更改"
+        saveButton.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        buttonContainer.addSubview(saveButton)
+        
+        // Reset Button
+        let resetButton = HoverableButton()
+        resetButton.title = "重置为默认"
+        resetButton.target = self
+        resetButton.action = #selector(resetToDefault)
+        resetButton.frame = NSRect(x: buttonContainer.frame.width - 280, y: 25, width: 120, height: 32)
+        resetButton.autoresizingMask = [.minXMargin]
+        resetButton.bezelStyle = .rounded
+        resetButton.toolTip = "重置所有设置为默认值"
+        resetButton.font = NSFont.systemFont(ofSize: 14)
+        buttonContainer.addSubview(resetButton)
+
+        window!.contentView = contentView
+    }
+    
+    func refreshSettings() {
+        // 重新获取最新的设置值并更新界面
+        let settings = SettingsManager.shared.settings
+        
+        apiKeyField.stringValue = settings.apiKey
+        apiURLField.stringValue = settings.apiURL
+        modelField.stringValue = settings.modelName
+        temperatureField.stringValue = String(settings.temperature)
+        qaPromptField.stringValue = settings.qaPrompt
+        translatePromptField.stringValue = settings.translatePrompt
+        
+        // 确保输入框的对齐和自适应属性
+        apiKeyField.autoresizingMask = [.width]
+        apiKeyField.alignment = .left
+        apiURLField.autoresizingMask = [.width]
+        apiURLField.alignment = .left
+        modelField.autoresizingMask = [.width]
+        modelField.alignment = .left
+        temperatureField.alignment = .center
+        qaPromptField.autoresizingMask = [.width]
+        qaPromptField.alignment = .left
+        translatePromptField.autoresizingMask = [.width]
+        translatePromptField.alignment = .left
+        
+        // 更新自动删除下拉框
+        let currentDays = settings.autoDeleteDays
+        switch currentDays {
+        case 0: autoDeletePopUp.selectItem(at: 0)
+        case 7: autoDeletePopUp.selectItem(at: 1)
+        case 15: autoDeletePopUp.selectItem(at: 2)
+        case 30: autoDeletePopUp.selectItem(at: 3)
+        case 90: autoDeletePopUp.selectItem(at: 4)
+        case 180: autoDeletePopUp.selectItem(at: 5)
+        default: autoDeletePopUp.selectItem(at: 0)
+        }
+    }
+
+    @objc func resetToDefault() {
+        let alert = NSAlert()
+        alert.messageText = "重置设置"
+        alert.informativeText = "确定要重置所有设置为默认值吗？这个操作不能撤销。"
+        alert.addButton(withTitle: "重置")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .warning
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            // 重置为默认设置
+            let defaultSettings = AppSettings(
+                apiKey: "",
+                apiURL: "https://aihubmix.com/v1/chat/completions",
+                autoDeleteDays: 0,
+                modelName: "gpt-3.5-turbo",
+                temperature: 0.7,
+                qaPrompt: "你是一个有用的AI助手，请用中文回答：",
+                translatePrompt: "你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文"
+            )
+            
+            SettingsManager.shared.settings = defaultSettings
+            
+            // 保存默认设置
+            if SettingsManager.shared.saveSettingsWithResult() {
+                // 刷新界面显示
+                refreshSettings()
+                
+                // 显示成功提示
+                if let resetButton = window?.contentView?.subviews.first(where: { $0 is NSView })?.subviews.first(where: { $0 is HoverableButton && ($0 as! HoverableButton).title == "重置为默认" }) as? HoverableButton {
+                    resetButton.showFeedback("已重置!")
+                }
+                
+                // 重新加载配置
+                if let appDelegate = NSApplication.shared.delegate as? AppDelegate {
+                    appDelegate.loadConfig()
+                }
+            }
+        }
+    }
+
+    @objc func saveSettings() {
+        // 验证输入
+        let temperatureValue = Double(temperatureField.stringValue) ?? 0.7
+        if temperatureValue < 0.0 || temperatureValue > 2.0 {
+            let alert = NSAlert()
+            alert.messageText = "输入错误"
+            alert.informativeText = "温度值必须在 0.0 到 2.0 之间"
+            alert.addButton(withTitle: "确定")
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
+        }
+        
+        // 验证 API URL
+        if !apiURLField.stringValue.isEmpty && !apiURLField.stringValue.hasPrefix("http") {
+            let alert = NSAlert()
+            alert.messageText = "输入错误"
+            alert.informativeText = "API URL 必须以 http:// 或 https:// 开头"
+            alert.addButton(withTitle: "确定")
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
+        }
+        
+        // 保存设置
+        SettingsManager.shared.settings.apiKey = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        SettingsManager.shared.settings.apiURL = apiURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        SettingsManager.shared.settings.modelName = modelField.stringValue.isEmpty ? "gpt-3.5-turbo" : modelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        SettingsManager.shared.settings.temperature = max(0.0, min(2.0, temperatureValue))
+        SettingsManager.shared.settings.qaPrompt = qaPromptField.stringValue.isEmpty ? "你是一个有用的AI助手，请用中文回答：" : qaPromptField.stringValue
+        SettingsManager.shared.settings.translatePrompt = translatePromptField.stringValue.isEmpty ? "你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文" : translatePromptField.stringValue
+        
+        // 保存自动删除设置
+        let selectedIndex = autoDeletePopUp.indexOfSelectedItem
+        switch selectedIndex {
+        case 0: SettingsManager.shared.settings.autoDeleteDays = 0   // 不自动删除
+        case 1: SettingsManager.shared.settings.autoDeleteDays = 7   // 7天
+        case 2: SettingsManager.shared.settings.autoDeleteDays = 15  // 15天
+        case 3: SettingsManager.shared.settings.autoDeleteDays = 30  // 30天
+        case 4: SettingsManager.shared.settings.autoDeleteDays = 90  // 3个月
+        case 5: SettingsManager.shared.settings.autoDeleteDays = 180 // 6个月
+        default: SettingsManager.shared.settings.autoDeleteDays = 0
+        }
+        
+        // 尝试保存设置
+        let saveSuccess = SettingsManager.shared.saveSettingsWithResult()
+        
+        if saveSuccess {
+            // 显示保存成功反馈
+            if let saveButton = window?.contentView?.subviews.first(where: { $0 is HoverableButton }) as? HoverableButton {
+                saveButton.showFeedback("保存成功!")
+            }
+            
+            // 重新加载所有配置
+            if let appDelegate = NSApplication.shared.delegate as? AppDelegate {
+                appDelegate.loadConfig()
+            }
+            
+            // 在单例模式下，不自动关闭窗口，让用户手动关闭
+            print("设置已保存成功")
+            
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "保存失败"
+            alert.informativeText = "无法保存设置，请检查文件权限或磁盘空间"
+            alert.addButton(withTitle: "确定")
+            alert.alertStyle = .critical
+            alert.runModal()
         }
     }
 }
