@@ -3,6 +3,9 @@ import KeychainAccess
 import SwiftyJSON
 import WebKit
 import UniformTypeIdentifiers
+import CoreGraphics
+import CoreText
+import CoreImage
 
 // 通知名称定义
 extension Notification.Name {
@@ -293,7 +296,7 @@ class NoteManager {
 }
 
 // 添加笔记窗口控制器类
-class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
     // 添加属性
     private var noteTableView: NSTableView?
     private var noteList: [(id: Int, title: String)] = []
@@ -443,9 +446,9 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         window.title = "笔记模式"
         self.init(window: window)
         
-        // 设置关闭按钮事件
-        window.standardWindowButton(.closeButton)?.target = NSApplication.shared.delegate
-        window.standardWindowButton(.closeButton)?.action = #selector(AppDelegate.closeWindow)
+        // 设置关闭按钮事件 - 使用标准的窗口关闭行为
+        window.isReleasedWhenClosed = false
+        window.delegate = self
         
         originalText = text  // 保存原始文本
         setupUI()
@@ -816,7 +819,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         
         // 获取设置窗口
         if let settingsWindow = sender.window {
-            panel.beginSheetModal(for: settingsWindow) { [weak self] response in
+            panel.beginSheetModal(for: settingsWindow) { response in
                 if response == .OK {
                     if let url = panel.url {
                         // 保存选择的路径
@@ -1004,6 +1007,18 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
             }
             print("保存失败：\(error.localizedDescription)")
         }
+    }
+    
+    // MARK: - NSWindowDelegate
+    
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // 允许窗口关闭
+        return true
+    }
+    
+    func windowWillClose(_ notification: Notification) {
+        // 清理资源
+        print("笔记窗口正在关闭")
     }
     
     @objc func rewriteContent() {
@@ -1562,6 +1577,722 @@ extension NoteWindowController: NSToolbarDelegate {
     }
 }
 
+// 图片生成样式枚举
+enum ImageStyle: String, CaseIterable {
+    case modern = "modern"
+    case business = "business"
+    case colorful = "colorful"
+    case minimal = "minimal"
+    
+    var displayName: String {
+        switch self {
+        case .modern: return "现代风格"
+        case .business: return "商务风格"
+        case .colorful: return "彩色风格"
+        case .minimal: return "简约风格"
+        }
+    }
+    
+    var colors: (background: NSColor, primary: NSColor, secondary: NSColor, accent: NSColor) {
+        switch self {
+        case .modern:
+            return (.white, .black, NSColor(white: 0.3, alpha: 1.0), NSColor.systemBlue)
+        case .business:
+            return (NSColor(white: 0.95, alpha: 1.0), NSColor(white: 0.2, alpha: 1.0), NSColor(white: 0.5, alpha: 1.0), NSColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1.0))
+        case .colorful:
+            return (NSColor(red: 0.98, green: 0.98, blue: 1.0, alpha: 1.0), NSColor(red: 0.2, green: 0.2, blue: 0.4, alpha: 1.0), NSColor(red: 0.6, green: 0.6, blue: 0.8, alpha: 1.0), NSColor(red: 1.0, green: 0.3, blue: 0.5, alpha: 1.0))
+        case .minimal:
+            return (NSColor(white: 0.98, alpha: 1.0), NSColor(white: 0.1, alpha: 1.0), NSColor(white: 0.6, alpha: 1.0), NSColor(white: 0.4, alpha: 1.0))
+        }
+    }
+}
+
+// 图片尺寸枚举
+enum ImageSize: String, CaseIterable {
+    case small = "small"
+    case medium = "medium"
+    case large = "large"
+    case square = "square"
+    
+    var displayName: String {
+        switch self {
+        case .small: return "小尺寸(400x300)"
+        case .medium: return "中尺寸(800x600)"
+        case .large: return "大尺寸(1200x900)"
+        case .square: return "正方形(800x800)"
+        }
+    }
+    
+    var dimensions: NSSize {
+        switch self {
+        case .small: return NSSize(width: 400, height: 300)
+        case .medium: return NSSize(width: 800, height: 600)
+        case .large: return NSSize(width: 1200, height: 900)
+        case .square: return NSSize(width: 800, height: 800)
+        }
+    }
+}
+
+// 公告内容结构
+struct AnnouncementContent {
+    let title: String
+    let subtitle: String?
+    let mainContent: [String]
+    let highlights: [String]
+    let footer: String?
+    
+    init(from analyzedText: String) {
+        // 解析AI返回的固定格式：
+        // 1. 标题：
+        // 2. 原文：
+        // 3. 重点：
+        // 4. 时间：
+        // 5. 地点：
+        
+        var parsedTitle = "公告"
+        let parsedSubtitle: String? = nil
+        var parsedMainContent: [String] = []
+        var parsedHighlights: [String] = []
+        var parsedFooter: String?
+        
+        let lines = analyzedText.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        // 解析每一行，提取具体内容
+        for (index, line) in lines.enumerated() {
+            var processed = false
+            
+            // 1. 检查标准格式
+            if line.hasPrefix("1.") && line.contains("标题：") {
+                let content = line.replacingOccurrences(of: "1.", with: "")
+                              .replacingOccurrences(of: "标题：", with: "")
+                              .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !content.isEmpty {
+                    parsedTitle = content
+                    processed = true
+                }
+            } else if line.hasPrefix("2.") && line.contains("原文：") {
+                let content = line.replacingOccurrences(of: "2.", with: "")
+                              .replacingOccurrences(of: "原文：", with: "")
+                              .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !content.isEmpty {
+                    parsedMainContent.append(content)
+                    processed = true
+                }
+            } else if line.hasPrefix("3.") && line.contains("重点：") {
+                let content = line.replacingOccurrences(of: "3.", with: "")
+                              .replacingOccurrences(of: "重点：", with: "")
+                              .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !content.isEmpty {
+                    parsedHighlights.append(content)
+                    processed = true
+                }
+            // 处理纯数字开头的重点项（如："1. 紧急上线："）
+            } else if line.range(of: "^\\d+\\.\\s*", options: .regularExpression) != nil && !line.contains("标题：") && !line.contains("原文：") {
+                parsedHighlights.append(line)
+                processed = true
+            } else if line.hasPrefix("4.") && line.contains("时间：") {
+                let content = line.replacingOccurrences(of: "4.", with: "")
+                              .replacingOccurrences(of: "时间：", with: "")
+                              .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !content.isEmpty {
+                    parsedHighlights.append("📅 " + content)
+                    processed = true
+                }
+            } else if line.hasPrefix("5.") && line.contains("地点：") {
+                let content = line.replacingOccurrences(of: "5.", with: "")
+                              .replacingOccurrences(of: "地点：", with: "")
+                              .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !content.isEmpty {
+                    parsedFooter = "📍 " + content
+                    processed = true
+                }
+            }
+            
+            // 2. 检查简单格式（如："标题：XXX"、"原文：XXX"）
+            if !processed {
+                if line.hasPrefix("标题：") || line.hasPrefix("标题:") {
+                    let content = line.replacingOccurrences(of: "标题：", with: "")
+                                  .replacingOccurrences(of: "标题:", with: "")
+                                  .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !content.isEmpty {
+                        parsedTitle = content
+                        processed = true
+                    }
+                } else if line.hasPrefix("原文：") || line.hasPrefix("原文:") {
+                    let content = line.replacingOccurrences(of: "原文：", with: "")
+                                  .replacingOccurrences(of: "原文:", with: "")
+                                  .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !content.isEmpty {
+                        parsedMainContent.append(content)
+                        processed = true
+                    }
+                } else if line.hasPrefix("重点：") || line.hasPrefix("重点:") {
+                    let content = line.replacingOccurrences(of: "重点：", with: "")
+                                  .replacingOccurrences(of: "重点:", with: "")
+                                  .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !content.isEmpty {
+                        parsedHighlights.append(content)
+                        processed = true
+                    } else {
+                        // 如果"重点："后面没有内容，跳过这行，不作为内容处理
+                        processed = true
+                    }
+                } else if line.hasPrefix("时间：") || line.hasPrefix("时间:") {
+                    let content = line.replacingOccurrences(of: "时间：", with: "")
+                                  .replacingOccurrences(of: "时间:", with: "")
+                                  .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !content.isEmpty {
+                        parsedHighlights.append("📅 " + content)
+                        processed = true
+                    }
+                } else if line.hasPrefix("地点：") || line.hasPrefix("地点:") {
+                    let content = line.replacingOccurrences(of: "地点：", with: "")
+                                  .replacingOccurrences(of: "地点:", with: "")
+                                  .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !content.isEmpty {
+                        parsedFooter = "📍 " + content
+                        processed = true
+                    }
+                }
+            }
+            
+            // 3. 如果没有被处理且是第一行，可能是标题
+            if !processed && index == 0 && parsedTitle == "公告" {
+                parsedTitle = line
+                processed = true
+            }
+            
+            // 4. 如果还没被处理，作为主要内容
+            if !processed {
+                parsedMainContent.append(line)
+            }
+        }
+        
+        // 设置解析结果
+        title = parsedTitle
+        subtitle = parsedSubtitle
+        mainContent = parsedMainContent
+        highlights = parsedHighlights
+        footer = parsedFooter
+
+    }
+}
+
+// 图片生成器类
+class AnnouncementImageGenerator {
+    static let shared = AnnouncementImageGenerator()
+    
+    private init() {}
+    
+    func generateImage(content: AnnouncementContent, style: ImageStyle, size: ImageSize) -> NSImage? {
+        let dimensions = size.dimensions
+        let colors = style.colors
+        
+        // 创建NSImage来处理绘制
+        let image = NSImage(size: dimensions)
+        
+        // 使用defer确保unlockFocus始终被调用
+        image.lockFocus()
+        defer { image.unlockFocus() }
+        
+        // 获取当前图形上下文
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            return nil
+        }
+        
+        // 绘制简洁的现代背景
+        let bgColor = NSColor(red: 0.97, green: 0.98, blue: 1.0, alpha: 1.0) // 极淡的蓝白色
+        context.setFillColor(bgColor.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: dimensions.width, height: dimensions.height))
+        
+        // 计算布局参数
+        let margin: CGFloat = dimensions.width * 0.08
+        let contentWidth = dimensions.width - (margin * 2)
+        let contentArea = CGRect(x: margin, y: margin, width: contentWidth, height: dimensions.height - (margin * 2))
+        
+        // 绘制内容
+        var currentY = contentArea.maxY - margin
+        
+        // 绘制顶部图标（类似参考图片的装饰）
+        let iconSize: CGFloat = min(dimensions.width * 0.1, 60)
+        let iconY = currentY - iconSize - 20
+        drawTopIcon(rect: CGRect(x: contentArea.minX + (contentArea.width - iconSize) / 2, y: iconY, width: iconSize, height: iconSize))
+        currentY = iconY - 10
+        
+        // 绘制标题 - 根据图片尺寸动态调整标题区域高度
+        let titleHeight = max(dimensions.height * 0.15, 60)  // 标题区域为15%高度或至少60px
+        currentY = drawTitle(
+            title: content.title,
+            rect: CGRect(x: contentArea.minX, y: currentY - titleHeight, width: contentArea.width, height: titleHeight),
+            colors: colors,
+            style: style
+        )
+        
+        // 绘制副标题
+        if let subtitle = content.subtitle {
+            currentY = drawSubtitle(
+                subtitle: subtitle,
+                rect: CGRect(x: contentArea.minX, y: currentY - 40, width: contentArea.width, height: 40),
+                colors: colors
+            )
+        }
+        
+        // 保持适当的标题与原文间距，增加呼吸感
+        currentY -= 40  // 增加间距，让布局更有呼吸感
+        
+        // 绘制主要内容（原文）- 优先显示，分配更多空间让其突出
+        if !content.mainContent.isEmpty {
+            // 根据图片尺寸动态计算预留空间 - 为简洁设计优化
+            let reservedSpaceForOthers = max(dimensions.height * 0.3, 120)  // 减少预留空间，给原文更多空间
+            let availableHeight = contentArea.height - titleHeight - iconSize - 50  // 减去标题和图标区域
+            let maxMainContentHeight = max(availableHeight - reservedSpaceForOthers, dimensions.height * 0.25)  // 给原文更多高度
+            let mainContentHeight = min(dimensions.height * 0.4, maxMainContentHeight)  // 最多40%高度给原文
+            
+            currentY = drawMainContent(
+                content: content.mainContent,
+                rect: CGRect(x: contentArea.minX, y: currentY - mainContentHeight, width: contentArea.width, height: mainContentHeight),
+                colors: colors
+            )
+        }
+        
+        // 绘制高亮内容
+        if !content.highlights.isEmpty {
+            // 根据图片尺寸动态计算高亮内容和页脚空间
+            let minFooterSpace = margin + max(dimensions.height * 0.15, 60)  // 为页脚预留15%高度或至少60px
+            let maxHighlightHeight = max(currentY - minFooterSpace, dimensions.height * 0.15)  // 至少15%高度给高亮内容
+            let highlightHeight = min(dimensions.height * 0.25, maxHighlightHeight)  // 最多25%高度给高亮内容
+            
+            currentY = drawHighlights(
+                highlights: content.highlights,
+                rect: CGRect(x: contentArea.minX, y: currentY - highlightHeight, width: contentArea.width, height: highlightHeight),
+                colors: colors,
+                style: style
+            )
+        }
+        
+        // 绘制页脚 - 确保页脚有足够空间，不与上面内容重叠
+        if let footer = content.footer {
+            // 根据图片尺寸动态计算页脚位置和高度
+            let footerHeight = max(dimensions.height * 0.08, 30)  // 页脚高度为8%或至少30px
+            let fixedFooterY = margin + footerHeight  // 固定底部位置
+            let dynamicFooterY = max(currentY - footerHeight - 10, fixedFooterY)  // 动态位置，10px间距
+            let footerY = min(fixedFooterY, dynamicFooterY)
+            
+            drawFooter(
+                footer: footer,
+                rect: CGRect(x: contentArea.minX, y: footerY, width: contentArea.width, height: footerHeight),
+                colors: colors
+            )
+        }
+        
+        // 添加装饰元素
+        drawDecorations(context: context, size: dimensions, style: style, colors: colors)
+        
+        return image
+    }
+    
+    private func drawTopIcon(rect: CGRect) {
+        // 绘制简洁的顶部装饰图标，类似参考图片
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            
+            // 绘制简单的圆形图标
+            let circleRect = rect.insetBy(dx: rect.width * 0.2, dy: rect.height * 0.2)
+            context.setFillColor(NSColor.systemBlue.withAlphaComponent(0.8).cgColor)
+            context.fillEllipse(in: circleRect)
+            
+            // 添加内部小圆
+            let innerCircle = circleRect.insetBy(dx: circleRect.width * 0.3, dy: circleRect.height * 0.3)
+            context.setFillColor(NSColor.white.cgColor)
+            context.fillEllipse(in: innerCircle)
+            
+            context.restoreGState()
+        }
+    }
+    
+    private func drawGradientBackground(context: CGContext, size: NSSize, style: ImageStyle) {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var gradientColors: [CGFloat] = []
+        
+        switch style {
+        case .modern:
+            gradientColors = [1.0, 1.0, 1.0, 1.0, 0.95, 0.95, 0.98, 1.0]
+        case .business:
+            gradientColors = [0.95, 0.95, 0.95, 1.0, 0.92, 0.92, 0.94, 1.0]
+        case .colorful:
+            gradientColors = [0.98, 0.98, 1.0, 1.0, 0.95, 0.95, 0.98, 1.0]
+        case .minimal:
+            return // 简约风格不使用渐变
+        }
+        
+        guard let gradient = CGGradient(colorSpace: colorSpace, colorComponents: gradientColors, locations: [0.0, 1.0], count: 2) else { return }
+        
+        context.drawLinearGradient(
+            gradient,
+            start: CGPoint(x: 0, y: size.height),
+            end: CGPoint(x: 0, y: 0),
+            options: []
+        )
+    }
+    
+    private func drawBorder(context: CGContext, size: NSSize, colors: (background: NSColor, primary: NSColor, secondary: NSColor, accent: NSColor)) {
+        context.setStrokeColor(colors.accent.cgColor)
+        context.setLineWidth(3.0)
+        let borderRect = CGRect(x: 10, y: 10, width: size.width - 20, height: size.height - 20)
+        context.stroke(borderRect)
+    }
+    
+    private func drawTitle(title: String, rect: CGRect, colors: (background: NSColor, primary: NSColor, secondary: NSColor, accent: NSColor), style: ImageStyle) -> CGFloat {
+        // 计算可用宽度，保留左右边距
+        let availableWidth = rect.width - 40 // 左右各留20px边距
+        let maxHeight = rect.height * 0.8
+        
+        // 从较大的字体开始，逐步缩小直到文字能适合显示区域
+        var fontSize: CGFloat = min(rect.width / 8, min(maxHeight, 66))
+        var font: NSFont
+        var attributedString: NSAttributedString
+        var textSize: NSSize
+        
+        repeat {
+            // 使用粗体现代字体，类似参考图片
+            font = NSFont(name: "PingFang SC", size: fontSize) ?? NSFont.boldSystemFont(ofSize: fontSize)
+            
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor.black, // 纯黑色，简洁现代
+                .kern: 2.0 // 适度字间距
+            ]
+            
+            attributedString = NSAttributedString(string: title, attributes: attributes)
+            textSize = attributedString.size()
+            
+            // 如果文字宽度超出可用宽度，缩小字体
+            if textSize.width > availableWidth && fontSize > 16 {
+                fontSize -= 2
+            } else {
+                break
+            }
+        } while fontSize > 16
+        
+        // 如果字体已经很小但仍然超宽，考虑换行
+        if textSize.width > availableWidth && title.count > 8 {
+            // 对于很长的标题，尝试在合适的位置换行
+            let maxCharsPerLine = Int(availableWidth / (fontSize * 0.7)) // 估算每行字符数
+            if title.count > maxCharsPerLine {
+                let breakPoint = min(maxCharsPerLine, title.count / 2)
+                let firstLine = String(title.prefix(breakPoint))
+                let secondLine = String(title.suffix(title.count - breakPoint))
+                
+                // 重新计算单行高度
+                let singleLineAttributes: [NSAttributedString.Key: Any] = [
+                    .font: font,
+                    .foregroundColor: NSColor.black,
+                    .kern: 2.0
+                ]
+                
+                let firstLineString = NSAttributedString(string: firstLine, attributes: singleLineAttributes)
+                let secondLineString = NSAttributedString(string: secondLine, attributes: singleLineAttributes)
+                
+                let lineHeight = firstLineString.size().height
+                let totalHeight = lineHeight * 2 + 8 // 两行加间距
+                
+                // 绘制第一行
+                let firstLineRect = CGRect(
+                    x: rect.minX + (rect.width - firstLineString.size().width) / 2,
+                    y: rect.minY + (rect.height - totalHeight) / 2 + lineHeight + 4,
+                    width: firstLineString.size().width,
+                    height: lineHeight
+                )
+                firstLineString.draw(in: firstLineRect)
+                
+                // 绘制第二行
+                let secondLineRect = CGRect(
+                    x: rect.minX + (rect.width - secondLineString.size().width) / 2,
+                    y: rect.minY + (rect.height - totalHeight) / 2,
+                    width: secondLineString.size().width,
+                    height: lineHeight
+                )
+                secondLineString.draw(in: secondLineRect)
+                
+                // 返回第二行底部位置
+                return secondLineRect.minY
+            }
+        }
+        
+        // 单行绘制标题
+        let textRect = CGRect(
+            x: rect.minX + (rect.width - textSize.width) / 2,
+            y: rect.minY + (rect.height - textSize.height) / 2,
+            width: textSize.width,
+            height: textSize.height
+        )
+        
+        attributedString.draw(in: textRect)
+        
+        // 返回标题文本底部位置，便于原文紧贴
+        return textRect.minY
+    }
+    
+    private func drawSubtitle(subtitle: String, rect: CGRect, colors: (background: NSColor, primary: NSColor, secondary: NSColor, accent: NSColor)) -> CGFloat {
+        let fontSize: CGFloat = min(rect.width / 25, 24)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: colors.secondary
+        ]
+        
+        let attributedString = NSAttributedString(string: subtitle, attributes: attributes)
+        let textSize = attributedString.size()
+        
+        let textRect = CGRect(
+            x: rect.minX + (rect.width - textSize.width) / 2,
+            y: rect.minY + (rect.height - textSize.height) / 2,
+            width: textSize.width,
+            height: textSize.height
+        )
+        
+        attributedString.draw(in: textRect)
+        
+        return rect.minY
+    }
+    
+    private func drawSeparatorLine(context: CGContext, y: CGFloat, width: CGFloat, x: CGFloat, color: NSColor) {
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(2.0)
+        context.move(to: CGPoint(x: x + width * 0.2, y: y))
+        context.addLine(to: CGPoint(x: x + width * 0.8, y: y))
+        context.strokePath()
+    }
+    
+    private func drawHighlights(highlights: [String], rect: CGRect, colors: (background: NSColor, primary: NSColor, secondary: NSColor, accent: NSColor), style: ImageStyle) -> CGFloat {
+        guard !highlights.isEmpty else { return rect.minY }
+        
+        let fontSize: CGFloat = min(rect.width / 40, min(rect.height / 8, 20))
+        let font = NSFont(name: "PingFang SC", size: fontSize) ?? NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        
+        var currentY = rect.maxY - 30
+        let lineHeight = fontSize * 2.0
+        
+        for highlight in highlights {
+            if currentY < rect.minY + 20 { break }
+            
+            // 处理文本内容，保持简洁
+            var displayText = highlight
+            var textColor = NSColor.systemBlue // 使用蓝色突出显示，类似参考图片
+            
+            // 根据内容类型决定颜色，但都保持简洁
+            if highlight.contains("📅") {
+                textColor = NSColor.systemBlue
+            } else if highlight.contains("📍") {
+                textColor = NSColor.systemBlue
+            } else if !highlight.hasPrefix("•") && !highlight.contains("📅") && !highlight.contains("📍") {
+                displayText = "• " + highlight
+                textColor = NSColor.systemBlue
+            }
+            
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineSpacing = 6
+            paragraphStyle.alignment = .center
+            
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: textColor,
+                .paragraphStyle: paragraphStyle,
+                .kern: 1.0
+            ]
+            
+            let attributedString = NSAttributedString(string: displayText, attributes: attributes)
+            let textSize = attributedString.size()
+            
+            let textRect = CGRect(
+                x: rect.minX + (rect.width - textSize.width) / 2,
+                y: currentY - lineHeight,
+                width: textSize.width,
+                height: lineHeight
+            )
+            
+            attributedString.draw(in: textRect)
+            currentY -= lineHeight + 15
+        }
+        
+        return currentY
+    }
+    
+    private func drawMainContent(content: [String], rect: CGRect, colors: (background: NSColor, primary: NSColor, secondary: NSColor, accent: NSColor)) -> CGFloat {
+        let fontSize: CGFloat = min(rect.width / 17, min(rect.height / 7, 42)) // 增大的原文字体
+        
+        // 使用隶变字体，优先级更高
+        let font = NSFont(name: "隶变", size: fontSize) ?? 
+                   NSFont(name: "隶变-简", size: fontSize) ?? 
+                   NSFont(name: "Baoli SC", size: fontSize) ?? 
+                   NSFont(name: "STLiti", size: fontSize) ??  // 添加更多隶书字体选项
+                   NSFont.boldSystemFont(ofSize: fontSize)  // 如果没有隶书字体，使用加粗系统字体
+        
+        let lineHeight: CGFloat = fontSize * 1.5 // 适当的行高
+        var currentY = rect.maxY - 5 // 进一步减少顶部间距
+        
+        for line in content {
+            if currentY < rect.minY { break }
+            
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.alignment = .center // 居中对齐
+            paragraphStyle.lineSpacing = 8
+            
+            // 简洁的原文文字样式
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor.black, // 纯黑色文字
+                .kern: 1.0, // 适度字间距
+                .paragraphStyle: paragraphStyle
+            ]
+            
+            let attributedString = NSAttributedString(string: line, attributes: attributes)
+            
+            // 计算文本尺寸以实现居中
+            let textSize = attributedString.size()
+            let availableWidth = rect.width - 80 // 左右留边距
+            
+            // 绘制增强版背景高亮
+            let backgroundRect: CGRect
+            let padding: CGFloat = 30  // 增加内边距
+            if textSize.width > availableWidth {
+                // 多行文本背景
+                backgroundRect = CGRect(
+                    x: rect.minX + 30,
+                    y: currentY - lineHeight * 3 - 15,
+                    width: availableWidth + 20,
+                    height: lineHeight * 3 + 30
+                )
+            } else {
+                // 单行文本背景
+                backgroundRect = CGRect(
+                    x: rect.minX + (rect.width - textSize.width) / 2 - padding,
+                    y: currentY - lineHeight - 15,
+                    width: textSize.width + padding * 2,
+                    height: lineHeight + 30
+                )
+            }
+            
+            // 绘制简洁的原文背景
+            if let context = NSGraphicsContext.current?.cgContext {
+                context.saveGState()
+                
+                // 简单的白色背景，轻微圆角
+                context.setFillColor(NSColor.white.cgColor)
+                let path = CGPath(roundedRect: backgroundRect, cornerWidth: 16, cornerHeight: 16, transform: nil)
+                context.addPath(path)
+                context.fillPath()
+                
+                // 非常淡的边框，增加层次感
+                context.setStrokeColor(NSColor.lightGray.withAlphaComponent(0.2).cgColor)
+                context.setLineWidth(1)
+                context.addPath(path)
+                context.strokePath()
+                
+                context.restoreGState()
+            }
+            
+            // 绘制文本 - 确保文本在美化后的背景中正确显示
+            if textSize.width > availableWidth {
+                // 多行文本
+                let maxRect = CGRect(x: rect.minX + 40, y: currentY - lineHeight * 3, width: availableWidth, height: lineHeight * 3)
+                attributedString.draw(in: maxRect)
+                // 返回背景框的底部位置，确保不与下一个内容重叠
+                currentY = backgroundRect.minY - 10  // 背景底部再向下10px作为安全间距
+            } else {
+                // 单行文本，居中显示
+                let textRect = CGRect(
+                    x: rect.minX + (rect.width - textSize.width) / 2,
+                    y: currentY - lineHeight,
+                    width: textSize.width,
+                    height: lineHeight
+                )
+                attributedString.draw(in: textRect)
+                // 返回背景框的底部位置，确保不与下一个内容重叠
+                currentY = backgroundRect.minY - 10  // 背景底部再向下10px作为安全间距
+            }
+        }
+        
+        return currentY
+    }
+    
+    private func drawFooter(footer: String, rect: CGRect, colors: (background: NSColor, primary: NSColor, secondary: NSColor, accent: NSColor)) {
+        let fontSize: CGFloat = min(rect.width / 50, min(rect.height * 0.8, 16))
+        let font = NSFont(name: "PingFang SC", size: fontSize) ?? NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        
+        // 使用简洁的灰色，低调不抢眼
+        let textColor = NSColor.gray
+        
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor,
+            .kern: 0.5,
+            .paragraphStyle: paragraphStyle
+        ]
+        
+        let attributedString = NSAttributedString(string: footer, attributes: attributes)
+        
+        let textRect = CGRect(
+            x: rect.minX,
+            y: rect.minY + (rect.height - fontSize) / 2,
+            width: rect.width,
+            height: fontSize
+        )
+        
+        attributedString.draw(in: textRect)
+    }
+    
+    private func drawDecorations(context: CGContext, size: NSSize, style: ImageStyle, colors: (background: NSColor, primary: NSColor, secondary: NSColor, accent: NSColor)) {
+        switch style {
+        case .modern:
+            // 现代风格：左上角几何图形
+            context.setFillColor(colors.accent.withAlphaComponent(0.3).cgColor)
+            let trianglePath = CGMutablePath()
+            trianglePath.move(to: CGPoint(x: 0, y: size.height))
+            trianglePath.addLine(to: CGPoint(x: 80, y: size.height))
+            trianglePath.addLine(to: CGPoint(x: 0, y: size.height - 80))
+            trianglePath.closeSubpath()
+            context.addPath(trianglePath)
+            context.fillPath()
+            
+        case .business:
+            // 商务风格：右下角装饰条纹
+            context.setStrokeColor(colors.accent.withAlphaComponent(0.2).cgColor)
+            context.setLineWidth(1.0)
+            for i in 0..<5 {
+                let x = size.width - 60 + CGFloat(i * 10)
+                context.move(to: CGPoint(x: x, y: 0))
+                context.addLine(to: CGPoint(x: x, y: 60))
+                context.strokePath()
+            }
+            
+        case .colorful:
+            // 彩色风格：四个角的圆点装饰
+            context.setFillColor(colors.accent.cgColor)
+            let radius: CGFloat = 15
+            let positions = [
+                CGPoint(x: 30, y: size.height - 30),
+                CGPoint(x: size.width - 30, y: size.height - 30),
+                CGPoint(x: 30, y: 30),
+                CGPoint(x: size.width - 30, y: 30)
+            ]
+            for position in positions {
+                context.fillEllipse(in: CGRect(x: position.x - radius, y: position.y - radius, width: radius * 2, height: radius * 2))
+            }
+            
+        case .minimal:
+            // 简约风格：无装饰
+            break
+        }
+    }
+}
+
 // 添加 Blinko 笔记结构体
 struct BlinkoNote: Codable {
     var id: Int
@@ -1876,6 +2607,42 @@ class BlinkoManager {
 @main
 class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
+    // 检查是否有其他AskPop进程在运行
+    static func checkForRunningAskPopProcesses() -> [Int] {
+        let task = Process()
+        task.launchPath = "/bin/ps"
+        task.arguments = ["aux"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            
+            var pids: [Int] = []
+            let lines = output.components(separatedBy: .newlines)
+            
+            for line in lines {
+                if line.contains("AskPop") && !line.contains("grep") && !line.contains("/bin/ps") {
+                    let components = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                    if components.count >= 2, let pid = Int(components[1]) {
+                        // 排除当前进程
+                        if pid != ProcessInfo.processInfo.processIdentifier {
+                            pids.append(pid)
+                        }
+                    }
+                }
+            }
+            
+            return pids
+        } catch {
+            print("Failed to check for running processes: \(error)")
+            return []
+        }
+    }
+    
     static func main() {
         // 检查是否已有实例在运行
         let lockFilePath = NSTemporaryDirectory() + "AskPop.lock"
@@ -1887,28 +2654,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         
         // 如果有命令行参数，说明是被PopClip调用的
         if arguments.count > 1 {
-            // 尝试发送通知给已存在的实例
-            let notificationData: [String: Any] = [
-                "prompt": arguments.count > 1 ? arguments[1] : "",
-                "text": arguments.count > 2 ? arguments[2] : "",
-                "timestamp": Date().timeIntervalSince1970
-            ]
+            // 检查是否真的有AskPop进程在运行
+            let runningProcesses = AppDelegate.checkForRunningAskPopProcesses()
             
-            // 发送分布式通知
-            DistributedNotificationCenter.default().postNotificationName(
-                NSNotification.Name("AskPopShowWindow"),
-                object: nil,
-                userInfo: notificationData,
-                deliverImmediately: true
-            )
-            
-            // 等待一下让通知发送
-            usleep(500000) // 0.5秒
-            
-            // 如果锁文件存在，说明有实例在运行，直接退出
-            if FileManager.default.fileExists(atPath: lockFilePath) {
+            if !runningProcesses.isEmpty {
+                print("Found \(runningProcesses.count) running AskPop process(es), sending notification")
+                
+                // 尝试发送通知给已存在的实例
+                let notificationData: [String: Any] = [
+                    "prompt": arguments.count > 1 ? arguments[1] : "",
+                    "text": arguments.count > 2 ? arguments[2] : "",
+                    "mode": arguments.count > 2 && arguments[2] == "image" ? "image" : "text",
+                    "arguments": arguments,
+                    "timestamp": Date().timeIntervalSince1970
+                ]
+                
+                // 发送分布式通知
+                DistributedNotificationCenter.default().postNotificationName(
+                    NSNotification.Name("AskPopShowWindow"),
+                    object: nil,
+                    userInfo: notificationData,
+                    deliverImmediately: true
+                )
+                
                 print("Found existing instance, sent notification and exiting")
                 exit(0)
+            } else {
+                print("No running AskPop processes found, cleaning up stale lock file if exists")
+                // 清理可能存在的陈旧锁文件
+                try? FileManager.default.removeItem(at: lockFileURL)
             }
             
             // 如果没有实例在运行，继续启动
@@ -1942,6 +2716,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var temperature: Double = 0.7
     var apiKey: String = ""
     
+    // 图片生成相关参数
+    var imageStyle: String = "modern"
+    var imageSize: String = "medium"
+    
     // API 请求任务
     var currentTask: Task<Void, Never>?
     
@@ -1950,6 +2728,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     
     var statusItem: NSStatusItem?
     var historyWindowController: HistoryWindowController?
+    var imageGeneratorWindowController: ImageGeneratorWindowController?
     var currentMode: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -2028,6 +2807,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "问答", action: #selector(showQAWindow), keyEquivalent: "")
         menu.addItem(withTitle: "翻译", action: #selector(showTranslationWindow), keyEquivalent: "")
+        menu.addItem(withTitle: "转图片", action: #selector(showImageWindow), keyEquivalent: "")
         menu.addItem(withTitle: "历史记录", action: #selector(showHistoryWindow), keyEquivalent: "")
         menu.addItem(withTitle: "设置", action: #selector(showSettingsWindow), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
@@ -2068,6 +2848,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
            let temp = Double(tempStr) {
             self.temperature = temp
         }
+        if let style = ProcessInfo.processInfo.environment["POPCLIP_OPTION_IMAGE_STYLE"] {
+            self.imageStyle = style
+        }
+        if let size = ProcessInfo.processInfo.environment["POPCLIP_OPTION_IMAGE_SIZE"] {
+            self.imageSize = size
+        }
         
         if apiKey.isEmpty {
             print("API Key is not set.")
@@ -2093,6 +2879,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         // 否则使用设置中的提示词
         return SettingsManager.shared.settings.translatePrompt
     }
+    
+    // 获取图片生成提示词：优先使用PopClip传来的，否则使用默认的
+    func getImagePrompt() -> String {
+        // 如果有PopClip传来的提示词，优先使用
+        if let popclipPrompt = ProcessInfo.processInfo.environment["POPCLIP_OPTION_IMAGE_PROMPT"] {
+            return popclipPrompt
+        }
+        // 否则使用默认提示词
+        return """
+        你是一个专业的公告制作助手。请分析以下文本内容，提取出关键信息并整理成清晰的公告格式。要求：
+        1. 提取主要标题（简洁有力）
+        2. 突出重要信息和关键数据
+        3. 按重要性排列内容层次
+        4. 添加必要的时间、地点等信息
+        5. 语言简洁明了，便于快速阅读
+        请直接返回整理后的公告内容，不需要markdown格式标记。
+        """
+    }
 
     @objc func showQAWindow() {
         createWindow(mode: "qa")
@@ -2100,6 +2904,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     @objc func showTranslationWindow() {
         createWindow(mode: "translation")
+    }
+
+    @objc func showImageWindow() {
+        if imageGeneratorWindowController == nil {
+            imageGeneratorWindowController = ImageGeneratorWindowController()
+        }
+        imageGeneratorWindowController?.showWindow(self)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc func showHistoryWindow() {
@@ -2142,11 +2954,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             return
         }
         
-        print("Notification data - prompt: \(prompt), text: \(text)")
+        let mode = userInfo["mode"] as? String ?? "text"
+        let arguments = userInfo["arguments"] as? [String] ?? []
+        
+        print("Notification data - prompt: \(prompt), text: \(text), mode: \(mode)")
         
         // 在主线程上处理UI操作
         DispatchQueue.main.async { [weak self] in
-            self?.processPopClipRequest(prompt: prompt, text: text)
+            if mode == "image" && arguments.count >= 3 && arguments[2] == "image" {
+                // 处理图片生成请求
+                let imageStyle = arguments.count > 3 ? arguments[3] : "modern"
+                let imageSize = arguments.count > 4 ? arguments[4] : "medium"
+                let imagePrompt = arguments.count > 5 ? arguments[5] : ""
+                
+                                 print("Processing image generation from notification - text: \(text), style: \(imageStyle), size: \(imageSize), prompt: \(imagePrompt)")
+                 self?.processImageRequest(text: text, style: imageStyle, size: imageSize, prompt: imagePrompt)
+            } else {
+                // 处理常规请求
+                self?.processPopClipRequest(prompt: prompt, text: text)
+            }
         }
     }
     
@@ -2155,11 +2981,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         
         // 如果有命令行参数，说明是被PopClip调用的
         if arguments.count > 2 {
-            let prompt = arguments[1]
-            let text = arguments[2]
-            print("Processing command line args - prompt: \(prompt), text: \(text)")
-            processPopClipRequest(prompt: prompt, text: text)
+            // 检查是否是图片生成模式（第二个参数是 "image"）
+            if arguments.count >= 3 && arguments[2] == "image" {
+                // 图片生成模式的参数格式：
+                // AskPop "text" image "style" "size" "prompt" "style"
+                let text = arguments[1]
+                let imageStyle = arguments.count > 3 ? arguments[3] : "modern"
+                let imageSize = arguments.count > 4 ? arguments[4] : "medium"
+                let imagePrompt = arguments.count > 5 ? arguments[5] : ""
+                
+                print("Processing image generation - text: \(text), style: \(imageStyle), size: \(imageSize)")
+                processImageRequest(text: text, style: imageStyle, size: imageSize, prompt: imagePrompt)
+            } else {
+                // 常规模式
+                let prompt = arguments[1]
+                let text = arguments[2]
+                print("Processing command line args - prompt: \(prompt), text: \(text)")
+                processPopClipRequest(prompt: prompt, text: text)
+            }
         }
+    }
+    
+    func processImageRequest(text: String, style: String, size: String, prompt: String) {
+        print("Processing image request with text: \(text)")
+        
+        // 解码text（如果是base64编码的）
+        var decodedText = text
+        if text.hasPrefix("base64:") {
+            let base64String = String(text.dropFirst(7)) // 移除 "base64:" 前缀
+            if let data = Data(base64Encoded: base64String),
+               let decoded = String(data: data, encoding: .utf8) {
+                decodedText = decoded
+                print("Decoded base64 text: \(decodedText)")
+            }
+        }
+        
+        // 直接调用图片生成处理
+        handleImageGeneration(text: decodedText, prompt: prompt.isEmpty ? getImagePrompt() : prompt)
     }
     
     func processPopClipRequest(prompt: String, text: String) {
@@ -2176,12 +3034,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             }
         }
         
-        // 根据提示词判断模式
+        // 根据PopClip Action ID和提示词内容判断模式
         var mode = "qa"
-        if prompt.contains("翻译") || prompt.contains("translate") || prompt.contains("translator") {
-            mode = "translation"
-        } else if prompt.contains("笔记") || prompt.contains("note") {
-            mode = "note"
+        
+        // 优先根据PopClip Action ID判断模式
+        if let actionId = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] {
+            switch actionId {
+            case "note_action":
+                mode = "note"
+            case "translate_action":
+                mode = "translation"
+            case "image_action":
+                mode = "image"
+            case "qa_action":
+                mode = "qa"
+            default:
+                // 如果Action ID不匹配已知类型，继续使用提示词判断
+                break
+            }
+        }
+        
+        // 如果没有明确的Action ID，基于提示词内容判断
+        if mode == "qa" {
+            if prompt.contains("公告图") || prompt.contains("生成图片") || prompt.contains("image") || 
+               prompt.contains("图片生成") || prompt.contains("announcement") {
+                mode = "image"
+            } else if prompt.contains("翻译") || prompt.contains("translate") || prompt.contains("translator") {
+                mode = "translation"
+            } else if prompt.contains("笔记") || prompt.contains("note") {
+                mode = "note"
+            }
         }
         
         // 确定最终使用的提示词（优先使用PopClip传来的，但如果是空的或默认的，则使用设置中的）
@@ -2190,9 +3072,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             finalPrompt = getQAPrompt()
         } else if mode == "translation" && (prompt.isEmpty || prompt == "你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文") {
             finalPrompt = getTranslationPrompt()
+        } else if mode == "image" {
+            finalPrompt = getImagePrompt()
         }
         
         print("Determined mode: \(mode), final prompt: \(finalPrompt)")
+        
+        // 如果是图片模式，直接处理图片生成
+        if mode == "image" {
+            handleImageGeneration(text: decodedText, prompt: finalPrompt)
+            return
+        }
+        
+        // 如果是笔记模式，处理笔记功能
+        if mode == "note" {
+            // 查找现有的笔记窗口或创建新的
+            let existingNoteWindow = NSApp.windows.first { window in
+                return window.windowController is NoteWindowController
+            }
+            
+            if let existingWindow = existingNoteWindow,
+               let noteController = existingWindow.windowController as? NoteWindowController {
+                // 使用现有窗口
+                noteController.aiContent = decodedText
+                existingWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            } else {
+                // 创建新的笔记窗口
+                let noteController = NoteWindowController(withText: decodedText)
+                noteController.showWindow(self)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            return
+        }
         
         // 如果已有窗口，复用现有窗口；否则创建新窗口
         if let existingWindow = self.window, existingWindow.isVisible {
@@ -2275,6 +3187,169 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
     }
     
+    // 处理图片生成
+    func handleImageGeneration(text: String, prompt: String) {
+        print("开始处理图片生成...")
+        
+        // 创建临时窗口显示处理状态
+        let statusWindow = createStatusWindow(message: "正在分析文本内容...")
+        
+        Task {
+            do {
+                // 第一步：使用AI分析文本内容
+                await MainActor.run {
+                    updateStatusWindow(statusWindow, message: "AI正在分析公告内容...")
+                }
+                
+                let analyzedContent = try await analyzeTextForImage(text: text, prompt: prompt)
+                
+                // 第二步：解析分析结果
+                await MainActor.run {
+                    updateStatusWindow(statusWindow, message: "正在准备图片布局...")
+                }
+                
+                let announcementContent = AnnouncementContent(from: analyzedContent)
+                
+                // 第三步：生成图片
+                await MainActor.run {
+                    updateStatusWindow(statusWindow, message: "正在生成公告图片...")
+                }
+                
+                let style = ImageStyle(rawValue: imageStyle) ?? .modern
+                let size = ImageSize(rawValue: imageSize) ?? .medium
+                
+                if let image = AnnouncementImageGenerator.shared.generateImage(
+                    content: announcementContent,
+                    style: style,
+                    size: size
+                ) {
+                    // 第四步：复制到粘贴板
+                    await MainActor.run {
+                        updateStatusWindow(statusWindow, message: "正在复制到粘贴板...")
+                        
+                        copyImageToClipboard(image)
+                        
+                        // 显示成功消息
+                        updateStatusWindow(statusWindow, message: "图片已复制到粘贴板！")
+                        
+                        // 2秒后关闭状态窗口
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            statusWindow.close()
+                        }
+                    }
+                } else {
+                    await MainActor.run {
+                        updateStatusWindow(statusWindow, message: "图片生成失败")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            statusWindow.close()
+                        }
+                    }
+                }
+                
+            } catch {
+                await MainActor.run {
+                    updateStatusWindow(statusWindow, message: "处理失败：\(error.localizedDescription)")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        statusWindow.close()
+                    }
+                }
+            }
+        }
+    }
+    
+    // 创建状态显示窗口
+    func createStatusWindow(message: String) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 120),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        window.title = "正在处理..."
+        window.center()
+        window.level = .floating
+        
+        let contentView = NSView(frame: window.contentView!.bounds)
+        contentView.autoresizingMask = [.width, .height]
+        
+        // 进度指示器
+        let progressIndicator = NSProgressIndicator(frame: NSRect(x: 50, y: 60, width: 300, height: 20))
+        progressIndicator.style = .bar
+        progressIndicator.isIndeterminate = true
+        progressIndicator.startAnimation(nil)
+        contentView.addSubview(progressIndicator)
+        
+        // 状态标签
+        let statusLabel = NSTextField(frame: NSRect(x: 20, y: 30, width: 360, height: 20))
+        statusLabel.stringValue = message
+        statusLabel.isEditable = false
+        statusLabel.isBordered = false
+        statusLabel.backgroundColor = .clear
+        statusLabel.alignment = .center
+        statusLabel.identifier = NSUserInterfaceItemIdentifier("statusLabel")
+        contentView.addSubview(statusLabel)
+        
+        window.contentView = contentView
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        
+        return window
+    }
+    
+    // 更新状态窗口消息
+    func updateStatusWindow(_ window: NSWindow, message: String) {
+        if let statusLabel = window.contentView?.subviews.first(where: { $0.identifier?.rawValue == "statusLabel" }) as? NSTextField {
+            statusLabel.stringValue = message
+        }
+    }
+    
+    // 使用AI分析文本内容
+    func analyzeTextForImage(text: String, prompt: String) async throws -> String {
+        // 设置消息
+        let messages = [
+            ["role": "system", "content": prompt],
+            ["role": "user", "content": text]
+        ]
+        
+        let url = URL(string: apiURL)!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let requestBody: [String: Any] = [
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": false  // 不使用流式响应
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "API 请求失败"])
+        }
+        
+        let json = try JSON(data: data)
+        guard let content = json["choices"][0]["message"]["content"].string else {
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "解析API响应失败"])
+        }
+        
+        return content
+    }
+    
+    // 复制图片到粘贴板
+    func copyImageToClipboard(_ image: NSImage) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([image])
+        print("图片已复制到粘贴板")
+    }
+    
     func createWindow(mode: String) {
         self.currentMode = mode
         
@@ -2333,6 +3408,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         case "translation":
             titleText = "AI助手 - 翻译"
             systemPrompt = getTranslationPrompt()
+        case "image":
+            titleText = "AI助手 - 图片生成"
+            systemPrompt = getImagePrompt()
         default:
             titleText = "AI助手"
             systemPrompt = getQAPrompt()
@@ -4309,7 +5387,7 @@ class SettingsWindowController: NSWindowController {
                 refreshSettings()
                 
                 // 显示成功提示
-                if let resetButton = window?.contentView?.subviews.first(where: { $0 is NSView })?.subviews.first(where: { $0 is HoverableButton && ($0 as! HoverableButton).title == "重置为默认" }) as? HoverableButton {
+                if let resetButton = window?.contentView?.subviews.first?.subviews.first(where: { $0 is HoverableButton && ($0 as! HoverableButton).title == "重置为默认" }) as? HoverableButton {
                     resetButton.showFeedback("已重置!")
                 }
                 
@@ -4393,4 +5471,624 @@ class SettingsWindowController: NSWindowController {
     }
 }
 
+// MARK: - 图片生成窗口控制器
+// 简化的文本视图类
+class SimpleTextView: NSTextView {
+    var placeholderText: String = "请输入要转换为图片的公告内容..." {
+        didSet {
+            if string.isEmpty {
+                showPlaceholder()
+            }
+        }
+    }
+    
+    private var isShowingPlaceholder = false
+    
+    override func awakeFromNib() {
+        super.awakeFromNib()
+        setupView()
+    }
+    
+    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: container)
+        setupView()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupView()
+    }
+    
+    private func setupView() {
+        showPlaceholder()
+    }
+    
+    private func showPlaceholder() {
+        if string.isEmpty {
+            string = placeholderText
+            textColor = NSColor.placeholderTextColor
+            isShowingPlaceholder = true
+        }
+    }
+    
+    private func hidePlaceholder() {
+        if isShowingPlaceholder {
+            string = ""
+            textColor = NSColor.labelColor
+            isShowingPlaceholder = false
+        }
+    }
+    
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result {
+            hidePlaceholder()
+        }
+        return result
+    }
+    
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result && string.isEmpty {
+            showPlaceholder()
+        }
+        return result
+    }
+    
+    override func mouseDown(with event: NSEvent) {
+        hidePlaceholder()
+        super.mouseDown(with: event)
+    }
+    
+    override func keyDown(with event: NSEvent) {
+        hidePlaceholder()
+        super.keyDown(with: event)
+    }
+    
+    var actualText: String {
+        return isShowingPlaceholder ? "" : string
+    }
+}
+
+class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
+    
+    // UI 组件
+    private var inputTextView: SimpleTextView!
+    private var styleSegmentedControl: NSSegmentedControl!
+    private var sizeSegmentedControl: NSSegmentedControl!
+    private var previewImageView: NSImageView!
+    private var generateButton: NSButton!
+    private var statusLabel: NSTextField!
+    private var saveButton: NSButton!
+    private var copyButton: NSButton!
+    
+    // 生成参数
+    private var currentStyle: ImageStyle = .modern
+    private var currentSize: ImageSize = .medium
+    private var generatedImage: NSImage?
+    
+    override init(window: NSWindow?) {
+        super.init(window: window)
+        setupWindow()
+    }
+    
+    convenience init() {
+        self.init(window: nil)
+    }
+    
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        print("🔧 图片编辑器：窗口已显示")
+        
+        // 设置焦点到文本输入框
+        DispatchQueue.main.async { [weak self] in
+            if let textView = self?.inputTextView {
+                self?.window?.makeFirstResponder(textView)
+            }
+        }
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    private func setupWindow() {
+        // 创建窗口
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        window.title = "图片生成器"
+        window.center()
+        window.minSize = NSSize(width: 800, height: 600)
+        window.maxSize = NSSize(width: 1400, height: 1000)
+        
+        // 设置内容视图
+        let contentView = NSView()
+        window.contentView = contentView
+        
+        setupUI(in: contentView)
+        
+        self.window = window
+    }
+    
+    private func setupUI(in parentView: NSView) {
+        parentView.wantsLayer = true
+        parentView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        
+        // 创建主要布局容器
+        let stackView = NSStackView()
+        stackView.orientation = .horizontal
+        stackView.spacing = 20
+        stackView.alignment = .top
+        stackView.distribution = .fillEqually
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        parentView.addSubview(stackView)
+        
+        // 左侧面板：输入和控制
+        let leftPanel = createLeftPanel()
+        stackView.addArrangedSubview(leftPanel)
+        
+        // 右侧面板：预览和操作
+        let rightPanel = createRightPanel()
+        stackView.addArrangedSubview(rightPanel)
+        
+        // 设置约束
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: parentView.topAnchor, constant: 20),
+            stackView.leadingAnchor.constraint(equalTo: parentView.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: parentView.trailingAnchor, constant: -20),
+            stackView.bottomAnchor.constraint(equalTo: parentView.bottomAnchor, constant: -20)
+        ])
+    }
+    
+    private func createLeftPanel() -> NSView {
+        let panel = NSView()
+        panel.wantsLayer = true
+        panel.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        panel.layer?.cornerRadius = 12
+        
+        // 创建垂直堆栈
+        let stackView = NSStackView()
+        stackView.orientation = .vertical
+        stackView.spacing = 16
+        stackView.alignment = .leading
+        stackView.distribution = .fill
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(stackView)
+        
+        // 标题
+        let titleLabel = NSTextField(labelWithString: "文本内容")
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        stackView.addArrangedSubview(titleLabel)
+        
+        // 使用更简单的NSScrollView + NSTextField组合
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .bezelBorder
+        scrollView.autohidesScrollers = true
+        
+        // 创建简单的可编辑文本字段
+        inputTextView = SimpleTextView(frame: .zero, textContainer: nil)
+        inputTextView.isEditable = true
+        inputTextView.isSelectable = true
+        inputTextView.isRichText = false
+        inputTextView.font = NSFont.systemFont(ofSize: 14)
+        inputTextView.textContainerInset = NSSize(width: 8, height: 8)
+        inputTextView.backgroundColor = NSColor.textBackgroundColor
+        inputTextView.textColor = NSColor.labelColor
+        inputTextView.insertionPointColor = NSColor.labelColor
+        inputTextView.delegate = self
+        
+        // 禁用自动替换功能
+        inputTextView.isAutomaticQuoteSubstitutionEnabled = false
+        inputTextView.isAutomaticDashSubstitutionEnabled = false
+        inputTextView.isAutomaticTextReplacementEnabled = false
+        inputTextView.isAutomaticSpellingCorrectionEnabled = false
+        
+        scrollView.documentView = inputTextView
+        stackView.addArrangedSubview(scrollView)
+        
+        print("✅ 图片编辑器：文本视图配置完成")
+        
+        // 样式选择
+        let styleLabel = NSTextField(labelWithString: "图片样式")
+        styleLabel.font = NSFont.boldSystemFont(ofSize: 14)
+        stackView.addArrangedSubview(styleLabel)
+        
+        styleSegmentedControl = NSSegmentedControl(labels: ["现代", "商务", "简约", "彩色"], 
+                                                  trackingMode: .selectOne, 
+                                                  target: self, 
+                                                  action: #selector(styleChanged(_:)))
+        styleSegmentedControl.selectedSegment = 0
+        stackView.addArrangedSubview(styleSegmentedControl)
+        
+        // 尺寸选择
+        let sizeLabel = NSTextField(labelWithString: "图片尺寸")
+        sizeLabel.font = NSFont.boldSystemFont(ofSize: 14)
+        stackView.addArrangedSubview(sizeLabel)
+        
+        sizeSegmentedControl = NSSegmentedControl(labels: ["小图", "中图", "大图", "方形"], 
+                                                 trackingMode: .selectOne, 
+                                                 target: self, 
+                                                 action: #selector(sizeChanged(_:)))
+        sizeSegmentedControl.selectedSegment = 1
+        stackView.addArrangedSubview(sizeSegmentedControl)
+        
+        // 生成按钮
+        generateButton = NSButton(title: "生成图片", target: self, action: #selector(generateImage(_:)))
+        generateButton.bezelStyle = .rounded
+        generateButton.font = NSFont.boldSystemFont(ofSize: 16)
+        generateButton.contentTintColor = NSColor.systemBlue
+        stackView.addArrangedSubview(generateButton)
+        
+        // 状态标签
+        statusLabel = NSTextField(labelWithString: "准备就绪")
+        statusLabel.font = NSFont.systemFont(ofSize: 12)
+        statusLabel.textColor = NSColor.secondaryLabelColor
+        statusLabel.isEditable = false
+        statusLabel.isBordered = false
+        statusLabel.drawsBackground = false
+        stackView.addArrangedSubview(statusLabel)
+        
+        // 设置约束
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: panel.topAnchor, constant: 20),
+            stackView.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -20),
+            stackView.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -20),
+            
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            styleSegmentedControl.heightAnchor.constraint(equalToConstant: 32),
+            sizeSegmentedControl.heightAnchor.constraint(equalToConstant: 32),
+            generateButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+        
+        return panel
+    }
+    
+    private func createRightPanel() -> NSView {
+        let panel = NSView()
+        panel.wantsLayer = true
+        panel.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        panel.layer?.cornerRadius = 12
+        
+        // 创建垂直堆栈
+        let stackView = NSStackView()
+        stackView.orientation = .vertical
+        stackView.spacing = 16
+        stackView.alignment = .centerX
+        stackView.distribution = .fill
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(stackView)
+        
+        // 预览标题
+        let previewLabel = NSTextField(labelWithString: "图片预览")
+        previewLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        stackView.addArrangedSubview(previewLabel)
+        
+        // 预览图像容器
+        let imageContainer = NSView()
+        imageContainer.wantsLayer = true
+        imageContainer.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        imageContainer.layer?.borderColor = NSColor.separatorColor.cgColor
+        imageContainer.layer?.borderWidth = 1
+        imageContainer.layer?.cornerRadius = 8
+        
+        previewImageView = NSImageView()
+        previewImageView.imageScaling = .scaleProportionallyUpOrDown
+        previewImageView.translatesAutoresizingMaskIntoConstraints = false
+        imageContainer.addSubview(previewImageView)
+        
+        // 设置占位图片
+        let placeholderImage = createPlaceholderImage()
+        previewImageView.image = placeholderImage
+        
+        stackView.addArrangedSubview(imageContainer)
+        
+        // 操作按钮容器
+        let buttonStackView = NSStackView()
+        buttonStackView.orientation = .horizontal
+        buttonStackView.spacing = 12
+        buttonStackView.distribution = .fillEqually
+        
+        // 复制按钮
+        copyButton = NSButton(title: "复制图片", target: self, action: #selector(copyImage(_:)))
+        copyButton.bezelStyle = .rounded
+        copyButton.isEnabled = false
+        buttonStackView.addArrangedSubview(copyButton)
+        
+        // 保存按钮
+        saveButton = NSButton(title: "保存图片", target: self, action: #selector(saveImage(_:)))
+        saveButton.bezelStyle = .rounded
+        saveButton.isEnabled = false
+        buttonStackView.addArrangedSubview(saveButton)
+        
+        stackView.addArrangedSubview(buttonStackView)
+        
+        // 设置约束
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: panel.topAnchor, constant: 20),
+            stackView.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -20),
+            stackView.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -20),
+            
+            imageContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            imageContainer.widthAnchor.constraint(equalTo: stackView.widthAnchor),
+            
+            previewImageView.topAnchor.constraint(equalTo: imageContainer.topAnchor, constant: 10),
+            previewImageView.leadingAnchor.constraint(equalTo: imageContainer.leadingAnchor, constant: 10),
+            previewImageView.trailingAnchor.constraint(equalTo: imageContainer.trailingAnchor, constant: -10),
+            previewImageView.bottomAnchor.constraint(equalTo: imageContainer.bottomAnchor, constant: -10),
+            
+            buttonStackView.heightAnchor.constraint(equalToConstant: 32)
+        ])
+        
+        return panel
+    }
+    
+    private func createPlaceholderImage() -> NSImage {
+        let size = NSSize(width: 400, height: 300)
+        let image = NSImage(size: size)
+        
+        image.lockFocus()
+        
+        // 绘制背景
+        NSColor.lightGray.withAlphaComponent(0.3).setFill()
+        NSRect(origin: .zero, size: size).fill()
+        
+        // 绘制文字
+        let text = "点击\"生成图片\"查看效果"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 16),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+        let attributedString = NSAttributedString(string: text, attributes: attributes)
+        let textSize = attributedString.size()
+        let textRect = NSRect(
+            x: (size.width - textSize.width) / 2,
+            y: (size.height - textSize.height) / 2,
+            width: textSize.width,
+            height: textSize.height
+        )
+        attributedString.draw(in: textRect)
+        
+        image.unlockFocus()
+        return image
+    }
+    
+    // MARK: - 事件处理
+    
+    @objc private func styleChanged(_ sender: NSSegmentedControl) {
+        let styles: [ImageStyle] = [.modern, .business, .minimal, .colorful]
+        currentStyle = styles[sender.selectedSegment]
+        statusLabel.stringValue = "样式已更改为：\(getStyleName(currentStyle))"
+    }
+    
+    @objc private func sizeChanged(_ sender: NSSegmentedControl) {
+        let sizes: [ImageSize] = [.small, .medium, .large, .square]
+        currentSize = sizes[sender.selectedSegment]
+        statusLabel.stringValue = "尺寸已更改为：\(getSizeName(currentSize))"
+    }
+    
+    @objc private func generateImage(_ sender: NSButton) {
+        let inputText = inputTextView.actualText.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !inputText.isEmpty else {
+            statusLabel.stringValue = "请输入要转换的文本内容"
+            statusLabel.textColor = NSColor.systemRed
+            return
+        }
+        
+        generateButton.isEnabled = false
+        statusLabel.stringValue = "正在生成图片..."
+        statusLabel.textColor = NSColor.systemBlue
+        
+        let prompt = getImagePrompt()
+        
+        Task {
+            do {
+                // 分析文本内容
+                await MainActor.run {
+                    statusLabel.stringValue = "AI正在分析内容..."
+                }
+                
+                let analyzedContent = try await analyzeTextForImage(text: inputText, prompt: prompt)
+                let announcementContent = AnnouncementContent(from: analyzedContent)
+                
+                // 生成图片
+                await MainActor.run {
+                    statusLabel.stringValue = "正在渲染图片..."
+                }
+                
+                if let image = AnnouncementImageGenerator.shared.generateImage(
+                    content: announcementContent,
+                    style: currentStyle,
+                    size: currentSize
+                ) {
+                    await MainActor.run {
+                        generatedImage = image
+                        previewImageView.image = image
+                        
+                        // 启用操作按钮
+                        copyButton.isEnabled = true
+                        saveButton.isEnabled = true
+                        
+                        statusLabel.stringValue = "图片生成成功！"
+                        statusLabel.textColor = NSColor.systemGreen
+                        generateButton.isEnabled = true
+                    }
+                } else {
+                    await MainActor.run {
+                        statusLabel.stringValue = "图片生成失败"
+                        statusLabel.textColor = NSColor.systemRed
+                        generateButton.isEnabled = true
+                    }
+                }
+                
+            } catch {
+                await MainActor.run {
+                    statusLabel.stringValue = "生成失败：\(error.localizedDescription)"
+                    statusLabel.textColor = NSColor.systemRed
+                    generateButton.isEnabled = true
+                }
+            }
+        }
+    }
+    
+    @objc private func copyImage(_ sender: NSButton) {
+        guard let image = generatedImage else { return }
+        copyImageToClipboard(image)
+        statusLabel.stringValue = "图片已复制到剪贴板"
+        statusLabel.textColor = NSColor.systemGreen
+    }
+    
+    @objc private func saveImage(_ sender: NSButton) {
+        guard let image = generatedImage else { return }
+        
+        let savePanel = NSSavePanel()
+        savePanel.title = "保存图片"
+        savePanel.nameFieldStringValue = "公告图片_\(Date().timeIntervalSince1970)"
+        savePanel.allowedContentTypes = [.png, .jpeg]
+        
+        savePanel.begin { [weak self] response in
+            if response == .OK, let url = savePanel.url {
+                self?.saveImageToFile(image: image, url: url)
+            }
+        }
+    }
+    
+    private func saveImageToFile(image: NSImage, url: URL) {
+        guard let tiffData = image.tiffRepresentation,
+              let bitmapImage = NSBitmapImageRep(data: tiffData) else {
+            statusLabel.stringValue = "保存失败：无法处理图片数据"
+            statusLabel.textColor = NSColor.systemRed
+            return
+        }
+        
+        let fileType: NSBitmapImageRep.FileType = url.pathExtension.lowercased() == "jpg" ? .jpeg : .png
+        let properties: [NSBitmapImageRep.PropertyKey: Any] = [:]
+        
+        guard let imageData = bitmapImage.representation(using: fileType, properties: properties) else {
+            statusLabel.stringValue = "保存失败：无法生成图片数据"
+            statusLabel.textColor = NSColor.systemRed
+            return
+        }
+        
+        do {
+            try imageData.write(to: url)
+            statusLabel.stringValue = "图片已保存到：\(url.lastPathComponent)"
+            statusLabel.textColor = NSColor.systemGreen
+        } catch {
+            statusLabel.stringValue = "保存失败：\(error.localizedDescription)"
+            statusLabel.textColor = NSColor.systemRed
+        }
+    }
+    
+    // MARK: - 工具方法
+    
+    private func getStyleName(_ style: ImageStyle) -> String {
+        switch style {
+        case .modern: return "现代"
+        case .business: return "商务"
+        case .minimal: return "简约"
+        case .colorful: return "彩色"
+        }
+    }
+    
+    private func getSizeName(_ size: ImageSize) -> String {
+        switch size {
+        case .small: return "小图"
+        case .medium: return "中图"
+        case .large: return "大图"
+        case .square: return "方形"
+        }
+    }
+    
+    private func getImagePrompt() -> String {
+        return """
+        你是一个专业的公告制作助手。请分析以下文本内容，提取出关键信息并整理成清晰的公告格式。要求：
+        1. 提取主要标题（简洁有力）
+        2. 突出重要信息和关键数据
+        3. 按重要性排列内容层次
+        4. 添加必要的时间、地点等信息
+        5. 语言简洁明了，便于快速阅读
+        请直接返回整理后的公告内容，不需要markdown格式标记。
+        """
+    }
+    
+    // MARK: - 占位符文字处理（已内置在SimpleTextView中）
+    
+    // MARK: - NSTextViewDelegate
+    
+    func textDidChange(_ notification: Notification) {
+        // 占位符处理已内置在SimpleTextView中，这里只需要基本的文本变化响应
+        print("📝 图片编辑器：文本内容发生变化")
+    }
+}
+
+// MARK: - 辅助函数扩展
+
+private func copyImageToClipboard(_ image: NSImage) {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.writeObjects([image])
+}
+
+private func analyzeTextForImage(text: String, prompt: String) async throws -> String {
+    // 获取配置
+    let settings = SettingsManager.shared.settings
+    let apiKey = settings.apiKey
+    let apiURL = settings.apiURL
+    let model = settings.modelName
+    let temperature = settings.temperature
+    
+    guard !apiKey.isEmpty else {
+        throw NSError(domain: "ImageGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "API密钥未配置"])
+    }
+    
+    // 构建请求
+    var request = URLRequest(url: URL(string: apiURL)!)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    
+    let messages = [
+        ["role": "system", "content": prompt],
+        ["role": "user", "content": text]
+    ]
+    
+    let requestBody: [String: Any] = [
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": 1000
+    ]
+    
+    request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+    
+    // 发送请求
+    let (data, response) = try await URLSession.shared.data(for: request)
+    
+    guard let httpResponse = response as? HTTPURLResponse,
+          200...299 ~= httpResponse.statusCode else {
+        throw NSError(domain: "ImageGenerator", code: 2, userInfo: [NSLocalizedDescriptionKey: "API请求失败"])
+    }
+    
+    // 解析响应
+    guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let choices = json["choices"] as? [[String: Any]],
+          let firstChoice = choices.first,
+          let message = firstChoice["message"] as? [String: Any],
+          let content = message["content"] as? String else {
+        throw NSError(domain: "ImageGenerator", code: 3, userInfo: [NSLocalizedDescriptionKey: "解析响应失败"])
+    }
+    
+    return content
+}
     

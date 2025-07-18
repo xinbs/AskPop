@@ -49,6 +49,9 @@ elif [ "$ACTION_ID" = "translate_action" ]; then
 elif [ "$ACTION_ID" = "note_action" ]; then
     PROMPT="$POPCLIP_OPTION_NOTE_PROMPT"
     log "使用笔记提示词"
+elif [ "$ACTION_ID" = "image_action" ]; then
+    PROMPT="$POPCLIP_OPTION_IMAGE_PROMPT"
+    log "使用图片生成提示词"
 else
     PROMPT="$POPCLIP_BEFORE_TEXT"
     log "使用默认提示词"
@@ -61,15 +64,37 @@ log "用户文本: $TEXT"
 # 使用 base64 编码来保留所有格式
 ESCAPED_TEXT=$(echo -n "$TEXT" | base64)
 
-# 在后台运行 AI 助手程序，并立即返回
-# 设置环境变量
-export POPCLIP_OPTION_APIKEY="$POPCLIP_OPTION_APIKEY"
-export POPCLIP_OPTION_API_URL="$POPCLIP_OPTION_API_URL"
-export POPCLIP_OPTION_MODEL="$POPCLIP_OPTION_MODEL"
-export POPCLIP_OPTION_TEMPERATURE="$POPCLIP_OPTION_TEMPERATURE"
-export POPCLIP_ACTION_IDENTIFIER="$ACTION_ID"
-
-nohup "$AI_TOOL" "$PROMPT" "base64:$ESCAPED_TEXT" >> "$LOG_FILE" 2>&1 &
+# 根据Action ID决定传递的参数
+if [ "$ACTION_ID" = "image_action" ]; then
+    # 图片生成模式：传递特殊的参数格式
+    log "调用图片生成模式"
+    nohup env \
+        POPCLIP_ACTION_IDENTIFIER="$ACTION_ID" \
+        POPCLIP_OPTION_APIKEY="$POPCLIP_OPTION_APIKEY" \
+        POPCLIP_OPTION_API_URL="$POPCLIP_OPTION_API_URL" \
+        POPCLIP_OPTION_MODEL="$POPCLIP_OPTION_MODEL" \
+        POPCLIP_OPTION_TEMPERATURE="$POPCLIP_OPTION_TEMPERATURE" \
+        POPCLIP_OPTION_IMAGE_STYLE="$POPCLIP_OPTION_IMAGE_STYLE" \
+        POPCLIP_OPTION_IMAGE_SIZE="$POPCLIP_OPTION_IMAGE_SIZE" \
+        POPCLIP_OPTION_IMAGE_PROMPT="$POPCLIP_OPTION_IMAGE_PROMPT" \
+        "$AI_TOOL" "base64:$ESCAPED_TEXT" image \
+        "${POPCLIP_OPTION_IMAGE_STYLE:-modern}" \
+        "${POPCLIP_OPTION_IMAGE_SIZE:-medium}" \
+        "$PROMPT" \
+        "${POPCLIP_OPTION_IMAGE_STYLE:-modern}" \
+        >> "$LOG_FILE" 2>&1 &
+else
+    # 其他模式：传递常规参数
+    log "调用常规模式"
+    nohup env \
+        POPCLIP_ACTION_IDENTIFIER="$ACTION_ID" \
+        POPCLIP_OPTION_APIKEY="$POPCLIP_OPTION_APIKEY" \
+        POPCLIP_OPTION_API_URL="$POPCLIP_OPTION_API_URL" \
+        POPCLIP_OPTION_MODEL="$POPCLIP_OPTION_MODEL" \
+        POPCLIP_OPTION_TEMPERATURE="$POPCLIP_OPTION_TEMPERATURE" \
+        "$AI_TOOL" "$PROMPT" "base64:$ESCAPED_TEXT" \
+        >> "$LOG_FILE" 2>&1 &
+fi
 
 # 记录后台进程 ID
 PID=$!

@@ -134,6 +134,50 @@
             <key>Description</key>
             <string>Blinko API 服务器地址</string>
         </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>image_prompt</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>图片生成提示词</string>
+            <key>Height</key>
+            <integer>120</integer>
+            <key>Default Value</key>
+            <string>你是一个专业的文本编辑助手。请分析以下文本内容，提取出关键信息并整理成清晰的公告格式。根据内容整理出以下内容，并且遵从以下格式输出：
+1. 标题：
+2. 原文：
+3. 重点：
+4. 时间：
+5. 地点：
+时间如果原文中没有提供，就是：现在。地点如果原文中没有提供，就是：重返帝国战场。语言简洁明了，便于快速阅读，请直接返回整理后的公告内容，不需要markdown格式标记。</string>
+            <key>Description</key>
+            <string>AI 分析公告内容的提示词</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>image_style</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>公告样式</string>
+            <key>Default Value</key>
+            <string>modern</string>
+            <key>Description</key>
+            <string>选择公告图片的视觉风格 (modern=现代风格, business=商务风格, colorful=彩色风格, minimal=简约风格)</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>image_size</string>
+            <key>Type</key>
+            <string>string</string>
+            <key>Label</key>
+            <string>图片尺寸</string>
+            <key>Default Value</key>
+            <string>medium</string>
+            <key>Description</key>
+            <string>选择生成图片的尺寸规格 (small=小尺寸400x300, medium=中尺寸800x600, large=大尺寸1200x900, square=正方形800x800)</string>
+        </dict>
     </array>
     <key>Actions</key>
     <array>
@@ -236,6 +280,42 @@
             <string>{popclip option model}</string>
             <key>Option Temperature</key>
             <string>{popclip option temperature}</string>
+        </dict>
+        <dict>
+            <key>Identifier</key>
+            <string>image_action</string>
+            <key>Title</key>
+            <string>转图片</string>
+            <key>Icon</key>
+            <string>symbol:photo.badge.plus</string>
+            <key>Shell Script File</key>
+            <string>run.sh</string>
+            <key>Script Interpreter</key>
+            <string>/bin/bash</string>
+            <key>Requirements</key>
+            <array>
+                <string>text</string>
+            </array>
+            <key>Pass HTML</key>
+            <false/>
+            <key>Regular Expression</key>
+            <string>(?s)^.{1,}$</string>
+            <key>Before Text</key>
+            <string>{popclip option image_prompt}</string>
+            <key>After Text</key>
+            <string></string>
+            <key>Option API Key</key>
+            <string>{popclip option apikey}</string>
+            <key>Option API URL</key>
+            <string>{popclip option api_url}</string>
+            <key>Option Model</key>
+            <string>{popclip option model}</string>
+            <key>Option Temperature</key>
+            <string>{popclip option temperature}</string>
+            <key>Option Image Style</key>
+            <string>{popclip option image_style}</string>
+            <key>Option Image Size</key>
+            <string>{popclip option image_size}</string>
         </dict>
     </array>
 </dict>
