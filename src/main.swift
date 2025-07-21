@@ -2967,11 +2967,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 let imageSize = arguments.count > 4 ? arguments[4] : "medium"
                 let imagePrompt = arguments.count > 5 ? arguments[5] : ""
                 
-                                 print("Processing image generation from notification - text: \(text), style: \(imageStyle), size: \(imageSize), prompt: \(imagePrompt)")
-                 self?.processImageRequest(text: text, style: imageStyle, size: imageSize, prompt: imagePrompt)
+                print("Processing image generation from notification - text: \(text), style: \(imageStyle), size: \(imageSize), prompt: \(imagePrompt)")
+                self?.processImageRequest(text: text, style: imageStyle, size: imageSize, prompt: imagePrompt)
             } else {
-                // 处理常规请求
-                self?.processPopClipRequest(prompt: prompt, text: text)
+                // 处理常规请求 - 从提示词推断Action ID
+                self?.processPopClipRequestWithActionInference(prompt: prompt, text: text)
             }
         }
     }
@@ -6090,5 +6090,162 @@ private func analyzeTextForImage(text: String, prompt: String) async throws -> S
     }
     
     return content
+}
+
+// MARK: - 分布式通知Action ID推断处理
+
+extension AppDelegate {
+    func processPopClipRequestWithActionInference(prompt: String, text: String) {
+        print("Processing PopClip request with action inference - prompt: \(prompt)")
+        
+        // 解码text（如果是base64编码的）
+        var decodedText = text
+        if text.hasPrefix("base64:") {
+            let base64String = String(text.dropFirst(7)) // 移除 "base64:" 前缀
+            if let data = Data(base64Encoded: base64String),
+               let decoded = String(data: data, encoding: .utf8) {
+                decodedText = decoded
+                print("Decoded base64 text: \(decodedText)")
+            }
+        }
+        
+        // 根据提示词内容推断Action ID
+        var mode = "qa"
+        
+        // 基于提示词内容判断模式
+        if prompt.contains("公告图") || prompt.contains("生成图片") || prompt.contains("image") || 
+           prompt.contains("图片生成") || prompt.contains("announcement") {
+            mode = "image"
+        } else if prompt.contains("翻译") || prompt.contains("translate") || prompt.contains("translator") ||
+                  prompt.contains("中英互译") || prompt.contains("英文译成中文") || prompt.contains("中文译成英文") {
+            mode = "translation"
+        } else if prompt.contains("笔记") || prompt.contains("note") || prompt.contains("Markdown") {
+            mode = "note"
+        } else if prompt.contains("AI 助手") || prompt.contains("解释和回答") || prompt.contains("问答") {
+            mode = "qa"
+        }
+        
+        print("Inferred mode from prompt: \(mode)")
+        
+        // 确定最终使用的提示词（优先使用PopClip传来的，但如果是空的或默认的，则使用设置中的）
+        var finalPrompt = prompt
+        if mode == "qa" && (prompt.isEmpty || prompt == "你是一个有用的AI 助手，可以解释和回答所有问题，请用中文回答：") {
+            finalPrompt = getQAPrompt()
+        } else if mode == "translation" && (prompt.isEmpty || prompt == "你是一位专业的中英互译翻译官，先判断需要翻译的文本是中文还是英文，请把中文译成英文，英文译成中文，请保留原文中的专业术语、专有名词和缩写，直接返回翻译后的文本。需要翻译的文本是：") {
+            finalPrompt = getTranslationPrompt()
+        } else if mode == "image" {
+            finalPrompt = getImagePrompt()
+        }
+        
+        print("Determined mode: \(mode), final prompt: \(finalPrompt)")
+        
+        // 如果是图片模式，直接处理图片生成
+        if mode == "image" {
+            handleImageGeneration(text: decodedText, prompt: finalPrompt)
+            return
+        }
+        
+        // 如果是笔记模式，处理笔记功能
+        if mode == "note" {
+            // 查找现有的笔记窗口或创建新的
+            let existingNoteWindow = NSApp.windows.first { window in
+                return window.windowController is NoteWindowController
+            }
+            
+            if let existingWindow = existingNoteWindow,
+               let noteController = existingWindow.windowController as? NoteWindowController {
+                // 使用现有窗口
+                noteController.aiContent = decodedText
+                existingWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            } else {
+                // 创建新的笔记窗口
+                let noteController = NoteWindowController(withText: decodedText)
+                noteController.showWindow(self)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            return
+        }
+        
+        // 如果已有窗口，复用现有窗口；否则创建新窗口
+        if let existingWindow = self.window, existingWindow.isVisible {
+            print("Reusing existing window")
+            // 复用现有窗口，但更新内容
+            self.currentMode = mode
+            
+            // 清除当前对话（可选）
+            self.messages = [["role": "system", "content": finalPrompt]]
+            self.systemPrompt = finalPrompt
+            
+            // 更新输入框内容
+            if let inputField = self.inputField {
+                inputField.stringValue = decodedText
+            }
+            
+            // 清除WebView内容并重新加载空白状态
+            if let webView = self.webView {
+                let emptyHTML = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+                    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+                    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+                    <style>
+                        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 12px; margin: 0; background: transparent; }
+                        .conversation-list { display: flex; flex-direction: column; gap: 4px; }
+                    </style>
+                </head>
+                <body>
+                    <div id="conversation-list" class="conversation-list"></div>
+                    <script>
+                        function appendMessage(role, content) { 
+                            const conversationList = document.getElementById('conversation-list');
+                            const messageDiv = document.createElement('div');
+                            messageDiv.innerHTML = content;
+                            conversationList.appendChild(messageDiv);
+                        }
+                    </script>
+                </body>
+                </html>
+                """
+                webView.loadHTMLString(emptyHTML, baseURL: nil)
+            }
+            
+            // 激活窗口
+            NSApp.activate(ignoringOtherApps: true)
+            existingWindow.makeKeyAndOrderFront(nil)
+            
+            // 自动发送请求
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.sendMessage()
+            }
+        } else {
+            print("Creating new window")
+            // 创建新窗口
+            createWindow(mode: mode)
+            
+            // 如果窗口创建成功，自动输入文本并发送请求
+            if let window = self.window, let inputField = self.inputField {
+                // 设置系统提示词
+                self.systemPrompt = finalPrompt
+                self.messages = [["role": "system", "content": finalPrompt]]
+                
+                // 自动输入用户文本
+                inputField.stringValue = decodedText
+                
+                // 激活应用并显示窗口
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+                
+                // 自动发送请求
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.sendMessage()
+                }
+            }
+        }
+    }
 }
     
