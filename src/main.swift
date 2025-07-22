@@ -3992,14 +3992,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
         
         messages.append(["role": "user", "content": messageText])
-        inputField?.stringValue = ""
         
+        // 显示用户消息
         if let webView = self.webView {
             let script = """
                 appendMessage('user', `\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "`", with: "\\`"))`, false);
             """
             webView.evaluateJavaScript(script)
         }
+        
+        // 清空输入框（在显示消息之后）
+        inputField?.stringValue = ""
         
         callAPI(withPrompt: "", text: messageText)
     }
@@ -5550,10 +5553,82 @@ class SimpleTextView: NSTextView {
     }
 }
 
+// 简单的多行文本输入框
+class SimpleMultiLineTextField: NSTextField {
+    var placeholderText: String = "请输入内容..." {
+        didSet {
+            placeholderString = placeholderText
+        }
+    }
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupView()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupView()
+    }
+    
+    private func setupView() {
+        // 设置为多行文本字段
+        isEditable = true
+        isSelectable = true
+        isBordered = true
+        isBezeled = true
+        bezelStyle = .squareBezel
+        font = NSFont.systemFont(ofSize: 14)
+        textColor = NSColor.labelColor
+        backgroundColor = NSColor.textBackgroundColor
+        
+        // 设置占位符
+        placeholderString = placeholderText
+        
+        // 启用撤销/重做
+        allowsEditingTextAttributes = false
+    }
+    
+    // 支持键盘快捷键
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command) {
+            switch event.charactersIgnoringModifiers {
+            case "c":
+                NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: self)
+                return true
+            case "v":
+                NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: self)
+                return true
+            case "x":
+                NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: self)
+                return true
+            case "a":
+                selectAll(nil)
+                return true
+            case "z":
+                if event.modifierFlags.contains(.shift) {
+                    undoManager?.redo()
+                } else {
+                    undoManager?.undo()
+                }
+                return true
+            default:
+                break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+    
+    var actualText: String {
+        return stringValue
+    }
+}
+
 class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
     
     // UI 组件
-    private var inputTextView: SimpleTextView!
+    private var inputTextField: SimpleMultiLineTextField!
+    private var promptTextField: SimpleMultiLineTextField!
     private var styleSegmentedControl: NSSegmentedControl!
     private var sizeSegmentedControl: NSSegmentedControl!
     private var previewImageView: NSImageView!
@@ -5580,10 +5655,17 @@ class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
         super.showWindow(sender)
         print("🔧 图片编辑器：窗口已显示")
         
+        // 自动加载已保存的提示词
+        if let savedPrompt = UserDefaults.standard.string(forKey: "ImageGenerator.CustomPrompt"),
+           !savedPrompt.isEmpty {
+            promptTextField.stringValue = savedPrompt
+            print("✅ 图片编辑器：已自动加载保存的提示词")
+        }
+        
         // 设置焦点到文本输入框
         DispatchQueue.main.async { [weak self] in
-            if let textView = self?.inputTextView {
-                self?.window?.makeFirstResponder(textView)
+            if let textField = self?.inputTextField {
+                self?.window?.makeFirstResponder(textField)
             }
         }
     }
@@ -5665,36 +5747,47 @@ class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
         titleLabel.font = NSFont.boldSystemFont(ofSize: 16)
         stackView.addArrangedSubview(titleLabel)
         
-        // 使用更简单的NSScrollView + NSTextField组合
-        let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.borderType = .bezelBorder
-        scrollView.autohidesScrollers = true
-        
-        // 创建简单的可编辑文本字段
-        inputTextView = SimpleTextView(frame: .zero, textContainer: nil)
-        inputTextView.isEditable = true
-        inputTextView.isSelectable = true
-        inputTextView.isRichText = false
-        inputTextView.font = NSFont.systemFont(ofSize: 14)
-        inputTextView.textContainerInset = NSSize(width: 8, height: 8)
-        inputTextView.backgroundColor = NSColor.textBackgroundColor
-        inputTextView.textColor = NSColor.labelColor
-        inputTextView.insertionPointColor = NSColor.labelColor
-        inputTextView.delegate = self
-        
-        // 禁用自动替换功能
-        inputTextView.isAutomaticQuoteSubstitutionEnabled = false
-        inputTextView.isAutomaticDashSubstitutionEnabled = false
-        inputTextView.isAutomaticTextReplacementEnabled = false
-        inputTextView.isAutomaticSpellingCorrectionEnabled = false
-        
-        scrollView.documentView = inputTextView
-        stackView.addArrangedSubview(scrollView)
+        // 创建文本输入字段
+        inputTextField = SimpleMultiLineTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 150))
+        inputTextField.translatesAutoresizingMaskIntoConstraints = false
+        inputTextField.placeholderText = "请输入要转换为图片的公告内容..."
+        stackView.addArrangedSubview(inputTextField)
         
         print("✅ 图片编辑器：文本视图配置完成")
+        
+        // 提示词设置区域
+        let promptTitleLabel = NSTextField(labelWithString: "自定义提示词（可选）")
+        promptTitleLabel.font = NSFont.boldSystemFont(ofSize: 14)
+        stackView.addArrangedSubview(promptTitleLabel)
+        
+        // 创建提示词输入字段
+        promptTextField = SimpleMultiLineTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        promptTextField.translatesAutoresizingMaskIntoConstraints = false
+        promptTextField.placeholderText = "例如：请将以下内容制作成简洁的公告图片，突出重点信息..."
+        stackView.addArrangedSubview(promptTextField)
+        
+        // 创建提示词操作按钮组
+        let promptButtonsContainer = NSStackView()
+        promptButtonsContainer.orientation = .horizontal
+        promptButtonsContainer.spacing = 8
+        promptButtonsContainer.distribution = .fillEqually
+        
+        let savePromptButton = NSButton(title: "保存提示词", target: self, action: #selector(saveCustomPrompt(_:)))
+        savePromptButton.bezelStyle = .rounded
+        savePromptButton.font = NSFont.systemFont(ofSize: 12)
+        
+        let loadPromptButton = NSButton(title: "加载提示词", target: self, action: #selector(loadCustomPrompt(_:)))
+        loadPromptButton.bezelStyle = .rounded
+        loadPromptButton.font = NSFont.systemFont(ofSize: 12)
+        
+        let clearPromptButton = NSButton(title: "清空提示词", target: self, action: #selector(clearCustomPrompt(_:)))
+        clearPromptButton.bezelStyle = .rounded
+        clearPromptButton.font = NSFont.systemFont(ofSize: 12)
+        
+        promptButtonsContainer.addArrangedSubview(savePromptButton)
+        promptButtonsContainer.addArrangedSubview(loadPromptButton)
+        promptButtonsContainer.addArrangedSubview(clearPromptButton)
+        stackView.addArrangedSubview(promptButtonsContainer)
         
         // 样式选择
         let styleLabel = NSTextField(labelWithString: "图片样式")
@@ -5743,7 +5836,11 @@ class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
             stackView.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -20),
             stackView.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -20),
             
-            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            inputTextField.heightAnchor.constraint(equalToConstant: 150),
+            // 提示词输入框高度约束
+            promptTextField.heightAnchor.constraint(equalToConstant: 100),
+            // 提示词按钮容器高度约束
+            promptButtonsContainer.heightAnchor.constraint(equalToConstant: 28),
             styleSegmentedControl.heightAnchor.constraint(equalToConstant: 32),
             sizeSegmentedControl.heightAnchor.constraint(equalToConstant: 32),
             generateButton.heightAnchor.constraint(equalToConstant: 44)
@@ -5877,7 +5974,7 @@ class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
     }
     
     @objc private func generateImage(_ sender: NSButton) {
-        let inputText = inputTextView.actualText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inputText = inputTextField.actualText.trimmingCharacters(in: .whitespacesAndNewlines)
         
         guard !inputText.isEmpty else {
             statusLabel.stringValue = "请输入要转换的文本内容"
@@ -5889,7 +5986,16 @@ class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
         statusLabel.stringValue = "正在生成图片..."
         statusLabel.textColor = NSColor.systemBlue
         
-        let prompt = getImagePrompt()
+        // 获取提示词：优先使用自定义提示词，否则使用默认提示词
+        let customPrompt = promptTextField.actualText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = customPrompt.isEmpty ? getImagePrompt() : customPrompt
+        
+        // 调试信息
+        if customPrompt.isEmpty {
+            print("🔧 图片生成：使用默认提示词")
+        } else {
+            print("🔧 图片生成：使用自定义提示词: \(String(customPrompt.prefix(50)))...")
+        }
         
         Task {
             do {
@@ -6029,6 +6135,64 @@ class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         // 占位符处理已内置在SimpleTextView中，这里只需要基本的文本变化响应
         print("📝 图片编辑器：文本内容发生变化")
+    }
+    
+    // MARK: - 提示词管理功能
+    
+    @objc private func saveCustomPrompt(_ sender: NSButton) {
+        let customPrompt = promptTextField.actualText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !customPrompt.isEmpty else {
+            statusLabel.stringValue = "请先输入自定义提示词"
+            statusLabel.textColor = NSColor.systemOrange
+            return
+        }
+        
+        UserDefaults.standard.set(customPrompt, forKey: "ImageGenerator.CustomPrompt")
+        statusLabel.stringValue = "自定义提示词已保存"
+        statusLabel.textColor = NSColor.systemGreen
+        
+        // 3秒后恢复状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.statusLabel.stringValue = "准备就绪"
+            self?.statusLabel.textColor = NSColor.secondaryLabelColor
+        }
+    }
+    
+    @objc private func loadCustomPrompt(_ sender: NSButton) {
+        guard let savedPrompt = UserDefaults.standard.string(forKey: "ImageGenerator.CustomPrompt"),
+              !savedPrompt.isEmpty else {
+            statusLabel.stringValue = "没有保存的自定义提示词"
+            statusLabel.textColor = NSColor.systemOrange
+            
+            // 3秒后恢复状态
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.statusLabel.stringValue = "准备就绪"
+                self?.statusLabel.textColor = NSColor.secondaryLabelColor
+            }
+            return
+        }
+        
+        promptTextField.stringValue = savedPrompt
+        statusLabel.stringValue = "已恢复保存的自定义提示词"
+        statusLabel.textColor = NSColor.systemGreen
+        
+        // 3秒后恢复状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.statusLabel.stringValue = "准备就绪"
+            self?.statusLabel.textColor = NSColor.secondaryLabelColor
+        }
+    }
+    
+    @objc private func clearCustomPrompt(_ sender: NSButton) {
+        promptTextField.stringValue = ""
+        statusLabel.stringValue = "已清空自定义提示词"
+        statusLabel.textColor = NSColor.systemBlue
+        
+        // 3秒后恢复状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.statusLabel.stringValue = "准备就绪"
+            self?.statusLabel.textColor = NSColor.secondaryLabelColor
+        }
     }
 }
 
@@ -6173,54 +6337,28 @@ extension AppDelegate {
             // 复用现有窗口，但更新内容
             self.currentMode = mode
             
-            // 清除当前对话（可选）
-            self.messages = [["role": "system", "content": finalPrompt]]
-            self.systemPrompt = finalPrompt
+            // 更新系统提示词（如果不同）
+            if self.systemPrompt != finalPrompt {
+                self.systemPrompt = finalPrompt
+                self.messages = [["role": "system", "content": finalPrompt]]
+            }
             
             // 更新输入框内容
             if let inputField = self.inputField {
                 inputField.stringValue = decodedText
             }
             
-            // 清除WebView内容并重新加载空白状态
-            if let webView = self.webView {
-                let emptyHTML = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-                    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-                    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-                    <style>
-                        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 12px; margin: 0; background: transparent; }
-                        .conversation-list { display: flex; flex-direction: column; gap: 4px; }
-                    </style>
-                </head>
-                <body>
-                    <div id="conversation-list" class="conversation-list"></div>
-                    <script>
-                        function appendMessage(role, content) { 
-                            const conversationList = document.getElementById('conversation-list');
-                            const messageDiv = document.createElement('div');
-                            messageDiv.innerHTML = content;
-                            conversationList.appendChild(messageDiv);
-                        }
-                    </script>
-                </body>
-                </html>
-                """
-                webView.loadHTMLString(emptyHTML, baseURL: nil)
-            }
-            
             // 激活窗口
             NSApp.activate(ignoringOtherApps: true)
             existingWindow.makeKeyAndOrderFront(nil)
             
-            // 自动发送请求
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.sendMessage()
+            // 直接发送消息，无需等待
+            print("Directly sending message for existing window")
+            if let inputField = self.inputField,
+               !inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.sendMessage()
+            } else {
+                print("Input field is empty, not sending message")
             }
         } else {
             print("Creating new window")
@@ -6241,8 +6379,15 @@ extension AppDelegate {
                 window.makeKeyAndOrderFront(nil)
                 
                 // 自动发送请求
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.sendMessage()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    print("Auto-sending message for new window")
+                    // 确保输入框有内容后再发送
+                    if let inputField = self?.inputField,
+                       !inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        self?.sendMessage()
+                    } else {
+                        print("Input field is empty, not sending message")
+                    }
                 }
             }
         }

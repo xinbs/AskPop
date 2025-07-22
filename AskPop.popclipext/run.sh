@@ -64,6 +64,47 @@ log "用户文本: $TEXT"
 # 使用 base64 编码来保留所有格式
 ESCAPED_TEXT=$(echo -n "$TEXT" | base64)
 
+# 检查是否有AskPop进程在运行
+LOCK_FILE="/tmp/AskPop.lock"
+if [ -f "$LOCK_FILE" ]; then
+    # 检查锁文件是否有效（进程是否真的在运行）
+    if pgrep -f "AskPop" > /dev/null; then
+        log "AskPop 已在运行，发送分布式通知"
+        
+        # 准备通知数据
+        if [ "$ACTION_ID" = "image_action" ]; then
+            # 图片生成模式的通知数据
+            notification_data="{\"prompt\":\"$PROMPT\",\"text\":\"base64:$ESCAPED_TEXT\",\"mode\":\"image\",\"arguments\":[\"base64:$ESCAPED_TEXT\",\"image\",\"${POPCLIP_OPTION_IMAGE_STYLE:-modern}\",\"${POPCLIP_OPTION_IMAGE_SIZE:-medium}\",\"$PROMPT\"]}"
+        else
+            # 常规模式的通知数据 - 根据Action ID设置正确的模式
+            case "$ACTION_ID" in
+                "qa_action")
+                    mode="qa"
+                    ;;
+                "translate_action")
+                    mode="translation"
+                    ;;
+                "note_action")
+                    mode="note"
+                    ;;
+                *)
+                    mode="qa"
+                    ;;
+            esac
+            notification_data="{\"prompt\":\"$PROMPT\",\"text\":\"base64:$ESCAPED_TEXT\",\"mode\":\"$mode\"}"
+        fi
+        
+        # 发送分布式通知
+        osascript -e "tell application \"System Events\" to post notification \"AskPopShowWindow\" with user info $notification_data"
+        
+        log "已发送分布式通知，退出"
+        exit 0
+    else
+        log "发现陈旧的锁文件，清理中..."
+        rm -f "$LOCK_FILE"
+    fi
+fi
+
 # 根据Action ID决定传递的参数
 if [ "$ACTION_ID" = "image_action" ]; then
     # 图片生成模式：传递特殊的参数格式
