@@ -6554,45 +6554,7 @@ class MarkdownRendererWindowController: NSWindowController {
         inputTextView.autoresizingMask = [.width]
         
         // 设置默认文本内容以便测试滚动
-        inputTextView.string = """
-# Markdown 渲染器测试
-
-这是一个用于测试 Markdown 渲染功能的示例文档。
-
-## 功能特点
-
-- **实时预览**：输入 Markdown 文本后点击渲染按钮查看效果
-- **多格式支持**：支持标题、列表、代码块等多种格式
-- **图片导出**：可以将渲染结果保存为图片文件
-- **复制功能**：支持直接复制图片到剪贴板
-
-## 代码示例
-
-```swift
-print("Hello, Markdown!")
-```
-
-## 列表示例
-
-1. 第一项
-2. 第二项
-3. 第三项
-
-### 无序列表
-
-- 项目 A
-- 项目 B
-- 项目 C
-
-## 表格示例
-
-| 列1 | 列2 | 列3 |
-|-----|-----|-----|
-| 数据1 | 数据2 | 数据3 |
-| 数据4 | 数据5 | 数据6 |
-
-**请编辑此文本，然后点击"渲染"按钮查看效果！**
-"""
+        inputTextView.string = “”
         
         // 将文本视图设置为滚动视图的文档视图
         scrollView.documentView = inputTextView
