@@ -6554,7 +6554,7 @@ class MarkdownRendererWindowController: NSWindowController {
         inputTextView.autoresizingMask = [.width]
         
         // 设置默认文本内容以便测试滚动
-        inputTextView.string = “”
+        inputTextView.string = ""
         
         // 将文本视图设置为滚动视图的文档视图
         scrollView.documentView = inputTextView
