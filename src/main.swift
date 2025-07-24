@@ -6606,7 +6606,7 @@ class MarkdownInputTextView: NSTextView {
 }
 
 // MARK: - Markdown Renderer Window Controller
-class MarkdownRendererWindowController: NSWindowController {
+class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandler {
     private var inputTextView: NSTextView!
     private var previewWebView: WKWebView!
     private var renderButton: NSButton!
@@ -6614,6 +6614,7 @@ class MarkdownRendererWindowController: NSWindowController {
     private var copyButton: NSButton!
     private var pdfButton: NSButton!
     private var scrollView: NSScrollView!
+    private var currentMarkdownText: String?
     
     override init(window: NSWindow?) {
         super.init(window: window)
@@ -6824,6 +6825,9 @@ class MarkdownRendererWindowController: NSWindowController {
         let markdownText = inputTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         print("🎬 渲染按钮被点击")
         print("📝 文本内容长度：\(markdownText.count) 字符")
+        
+        // 保存当前Markdown文本
+        self.currentMarkdownText = markdownText
         
         // 禁用渲染按钮防止重复点击
         renderButton.isEnabled = false
@@ -7109,164 +7113,353 @@ class MarkdownRendererWindowController: NSWindowController {
         }
     }
     
-    // 从WebView生成长图 - 改进的隐藏WebView方案
-    private func generateLongImageFromWebView(completion: @escaping (NSImage?) -> Void) {
-        print("📸 开始生成长图（改进的隐藏WebView方案）...")
+    // 从WebView生成长图 - 使用原渲染方案
+private func generateLongImageFromWebView(completion: @escaping (NSImage?) -> Void) {
+    let markdownText = inputTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !markdownText.isEmpty else {
+        print("❌ Markdown文本为空")
+        generateBackupLongImage(completion: completion)
+        return
+    }
+    
+    let startTime = Date()
+    print("🚀 [开始] 生成长图，时间：\(startTime)")
+    
+    DispatchQueue.main.async {
+        let config = WKWebViewConfiguration()
+        // 移除已弃用的javaScriptEnabled设置，现代WebView默认启用JavaScript
         
-        DispatchQueue.main.async {
-            // 首先获取当前预览WebView的HTML内容
-            self.previewWebView.evaluateJavaScript("document.documentElement.outerHTML") { htmlResult, error in
-                guard let htmlContent = htmlResult as? String else {
-                    print("❌ 无法获取HTML内容")
-                    self.generateBackupLongImage(completion: completion)
-                    return
+        // 添加消息处理器来接收JavaScript的renderComplete消息
+        let userContentController = WKUserContentController()
+        userContentController.add(self, name: "renderComplete")
+        config.userContentController = userContentController
+        
+        let targetWidth: CGFloat = 800
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: targetWidth, height: 1000), configuration: config)
+        
+        // 创建离屏容器
+        let containerView = NSView(frame: NSRect(x: -3000, y: -3000, width: targetWidth, height: 1000))
+        containerView.addSubview(webView)
+        
+        if let window = self.window {
+            window.contentView?.addSubview(containerView)
+        }
+        
+        // 设置15秒超时
+        let timeoutTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { _ in
+            print("⏰ [超时] 长图生成超时，使用备用方案")
+            containerView.removeFromSuperview()
+            self.generateBackupLongImage(completion: completion)
+        }
+        
+        // 存储WebView引用和完成回调，用于消息处理
+        var isCompleted = false
+        let handleCompletion = { (image: NSImage?) in
+            guard !isCompleted else { return }
+            isCompleted = true
+            timeoutTimer.invalidate()
+            containerView.removeFromSuperview()
+            
+            let totalTime = Date().timeIntervalSince(startTime)
+            if let image = image {
+                print("✅ [最终成功] 长图生成成功，总耗时：\(String(format: "%.2f", totalTime))秒")
+                completion(image)
+            } else {
+                print("⚠️ 长图生成失败，使用备用方案")
+                self.generateBackupLongImage(completion: completion)
+            }
+        }
+        
+        // 创建导航代理
+        let navigationDelegate = LongImageNavigationDelegate {
+            print("🎯 长图WebView加载完成")
+            
+            // 等待JavaScript渲染完成，如果没有收到renderComplete消息，则使用延迟截图
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                guard !isCompleted else { return }
+                print("⏰ 未收到JavaScript完成消息，开始延迟截图")
+                self.performLongImageSnapshot(webView: webView, targetWidth: targetWidth, completion: handleCompletion)
+            }
+        }
+        
+        webView.navigationDelegate = navigationDelegate
+        
+        // 使用与原渲染方案完全相同的HTML内容和JavaScript逻辑
+        let htmlContent = self.createRenderingHTML(markdownText: markdownText)
+        
+        print("🌐 [步骤1] 开始加载HTML到长图WebView")
+        webView.loadHTMLString(htmlContent, baseURL: nil)
+        
+        // 存储回调供消息处理器使用
+        self.longImageCompletionHandler = { success in
+            if success {
+                print("✅ 收到JavaScript渲染完成消息")
+                self.performLongImageSnapshot(webView: webView, targetWidth: targetWidth, completion: handleCompletion)
+            } else {
+                print("❌ JavaScript渲染失败")
+                handleCompletion(nil)
+            }
+        }
+    }
+}
+
+// 辅助方法：执行截图
+private func performLongImageSnapshot(webView: WKWebView, targetWidth: CGFloat, completion: @escaping (NSImage?) -> Void) {
+    // 计算内容高度
+    webView.evaluateJavaScript("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, 400)") { result, error in
+        var contentHeight: CGFloat = 1000
+        
+        if let error = error {
+            print("⚠️ JavaScript执行错误：\(error.localizedDescription)")
+        }
+        
+        if let height = result as? NSNumber {
+            contentHeight = max(400, CGFloat(height.doubleValue) + 80)
+            print("📏 计算得到内容高度：\(contentHeight)")
+        }
+        
+        // 调整WebView尺寸
+        webView.frame = NSRect(x: 0, y: 0, width: targetWidth, height: contentHeight)
+        if let containerView = webView.superview {
+            containerView.frame = NSRect(x: -3000, y: -3000, width: targetWidth, height: contentHeight)
+        }
+        
+        // 等待布局更新后截图
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            print("📸 开始截图...")
+            
+            webView.takeSnapshot(with: nil) { image, error in
+                if let error = error {
+                    print("❌ 截图失败：\(error.localizedDescription)")
+                    completion(nil)
+                } else if let image = image {
+                    print("✅ 截图成功，尺寸：\(image.size)")
+                    completion(image)
+                } else {
+                    print("⚠️ 截图返回nil")
+                    completion(nil)
                 }
-                
-                // 获取当前预览WebView的实际宽度
-                let previewWidth = self.previewWebView.frame.width
-                let targetWidth = max(600, min(1200, previewWidth)) // 限制在合理范围内
-                
-                // 创建隐藏的容器视图
-                let hiddenContainer = NSView()
-                hiddenContainer.frame = NSRect(x: -5000, y: -5000, width: targetWidth, height: 1000)
-                
-                // 添加到主窗口但位置在屏幕外（用户看不到）
-                if let mainWindow = NSApplication.shared.mainWindow {
-                    mainWindow.contentView?.addSubview(hiddenContainer)
+            }
+        }
+    }
+}
+
+// 添加属性来存储完成回调
+private var longImageCompletionHandler: ((Bool) -> Void)?
+    
+    // 新增：创建与原渲染方案相同的HTML内容
+    private func createRenderingHTML(markdownText: String) -> String {
+        let escapedMarkdown = markdownText
+            .replacingOccurrences(of: "\\", with: "\\\\\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "")
+        
+        // 返回与 renderMarkdownToImage 完全相同的HTML内容
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    background: white;
+                    padding: 30px;
+                    margin: 0;
+                    max-width: 740px;
+                    word-wrap: break-word;
+                    font-size: 16px;
                 }
+                h1, h2, h3, h4, h5, h6 {
+                    margin-top: 24px;
+                    margin-bottom: 16px;
+                    font-weight: 600;
+                    line-height: 1.25;
+                }
+                h1 { font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
+                h2 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
+                h3 { font-size: 1.25em; }
+                h4 { font-size: 1em; }
+                h5 { font-size: 0.875em; }
+                h6 { font-size: 0.85em; color: #6a737d; }
+                p { margin-bottom: 16px; }
+                blockquote {
+                    padding: 0 1em;
+                    color: #6a737d;
+                    border-left: 0.25em solid #dfe2e5;
+                    margin: 0 0 16px 0;
+                }
+                code {
+                    padding: 0.2em 0.4em;
+                    margin: 0;
+                    font-size: 85%;
+                    background-color: rgba(27,31,35,0.05);
+                    border-radius: 3px;
+                    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+                }
+                pre {
+                    padding: 16px;
+                    overflow: auto;
+                    font-size: 85%;
+                    line-height: 1.45;
+                    background-color: #f6f8fa;
+                    border-radius: 6px;
+                    margin-bottom: 16px;
+                    border: 1px solid #d0d7de;
+                }
+                pre code {
+                    padding: 0;
+                    background-color: transparent;
+                    border-radius: 0;
+                }
+                ul, ol {
+                    padding-left: 2em;
+                    margin-bottom: 16px;
+                }
+                li {
+                    margin-bottom: 4px;
+                }
+                table {
+                    border-collapse: collapse;
+                    width: 100%;
+                    margin-bottom: 16px;
+                    border: 1px solid #d0d7de;
+                }
+                th, td {
+                    padding: 6px 13px;
+                    border: 1px solid #d0d7de;
+                }
+                th {
+                    background-color: #f6f8fa;
+                    font-weight: 600;
+                }
+                img {
+                    max-width: 100%;
+                    height: auto;
+                }
+                hr {
+                    height: 0.25em;
+                    padding: 0;
+                    margin: 24px 0;
+                    background-color: #d0d7de;
+                    border: 0;
+                }
+                strong {
+                    font-weight: 600;
+                }
+                em {
+                    font-style: italic;
+                }
+            </style>
+            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+        </head>
+        <body>
+            <div id="content">正在加载...</div>
+            <script>
+                let renderingTimeout;
                 
-                // 创建隐藏的WebView，使用动态宽度
-                let hiddenWebView = WKWebView()
-                hiddenWebView.frame = NSRect(x: 0, y: 0, width: targetWidth, height: 1000)
-                hiddenContainer.addSubview(hiddenWebView)
-                
-                // 创建导航代理来监听加载完成
-                let navigationDelegate = HiddenWebViewNavigationDelegate { [weak self] in
-                    // 等待渲染完成
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        // 使用更精确的JavaScript来计算内容尺寸
-                        let script = """
-                            (function() {
-                                // 确保所有图片都已加载
-                                const images = document.querySelectorAll('img');
-                                let loadedImages = 0;
-                                
-                                function calculateDimensions() {
-                                    // 获取body的实际内容尺寸
-                                    const body = document.body;
-                                    const html = document.documentElement;
-                                    
-                                    // 计算实际内容高度，排除多余的空白
-                                    const contentHeight = Math.max(
-                                        body.scrollHeight,
-                                        body.offsetHeight,
-                                        html.clientHeight,
-                                        html.scrollHeight,
-                                        html.offsetHeight
-                                    );
-                                    
-                                    // 获取最后一个有内容的元素
-                                    const allElements = document.querySelectorAll('*');
-                                    let maxBottom = 0;
-                                    
-                                    for (let element of allElements) {
-                                        if (element.offsetHeight > 0) {
-                                            const rect = element.getBoundingClientRect();
-                                            const bottom = rect.bottom + window.scrollY;
-                                            maxBottom = Math.max(maxBottom, bottom);
-                                        }
-                                    }
-                                    
-                                    // 使用更保守的高度计算，添加适当的边距
-                                    const finalHeight = Math.min(contentHeight, maxBottom + 50);
-                                    
-                                    return {
-                                        width: Math.max(600, body.scrollWidth),
-                                        height: Math.max(400, finalHeight)
-                                    };
-                                }
-                                
-                                // 如果有图片，等待加载完成
-                                if (images.length > 0) {
-                                    for (let img of images) {
-                                        if (img.complete) {
-                                            loadedImages++;
-                                        } else {
-                                            img.onload = img.onerror = function() {
-                                                loadedImages++;
-                                                if (loadedImages === images.length) {
-                                                    return calculateDimensions();
-                                                }
-                                            };
-                                        }
-                                    }
-                                    
-                                    if (loadedImages === images.length) {
-                                        return calculateDimensions();
-                                    }
-                                    
-                                    // 超时保护
-                                    setTimeout(() => calculateDimensions(), 1000);
-                                } else {
-                                    return calculateDimensions();
-                                }
-                            })()
-                        """
+                // 等待 marked 库加载完成的函数
+                function waitForMarked() {
+                    return new Promise((resolve, reject) => {
+                        let attempts = 0;
+                        const maxAttempts = 50; // 5秒超时
                         
-                        hiddenWebView.evaluateJavaScript(script) { dimensionResult, dimensionError in
-                            var finalWidth: CGFloat = targetWidth
-                            var finalHeight: CGFloat = 1000
-                            
-                            if let dimensions = dimensionResult as? [String: Any],
-                               let width = dimensions["width"] as? NSNumber,
-                               let height = dimensions["height"] as? NSNumber {
-                                finalWidth = min(1200, max(600, CGFloat(width.doubleValue)))
-                                finalHeight = max(400, CGFloat(height.doubleValue))
-                                print("📏 计算得到的内容尺寸：宽度=\(finalWidth), 高度=\(finalHeight)")
+                        function checkMarked() {
+                            attempts++;
+                            if (typeof marked !== 'undefined') {
+                                console.log('✅ Marked 库已加载');
+                                resolve();
+                            } else if (attempts >= maxAttempts) {
+                                console.error('❌ Marked 库加载超时');
+                                reject(new Error('Marked 库加载超时'));
                             } else {
-                                print("⚠️ 无法获取精确尺寸，使用默认值")
+                                setTimeout(checkMarked, 100);
                             }
+                        }
+                        checkMarked();
+                    });
+                }
+                
+                // 渲染 Markdown 的函数
+                async function renderMarkdown() {
+                    try {
+                        console.log('🚀 开始渲染过程');
+                        
+                        // 等待 marked 库加载
+                        await waitForMarked();
+                        
+                        const markdown = `\(escapedMarkdown)`;
+                        console.log('📝 Markdown 文本长度:', markdown.length);
+                        console.log('📝 Markdown 内容预览:', markdown.substring(0, 100) + '...');
+                        
+                        if (!markdown.trim()) {
+                            document.getElementById('content').innerHTML = '<p>内容为空，请输入 Markdown 文本</p>';
+                            return;
+                        }
+                        
+                        // 配置 marked 选项
+                        marked.setOptions({
+                            breaks: true,
+                            gfm: true,
+                            pedantic: false,
+                            smartLists: true,
+                            smartypants: false
+                        });
+                        
+                        // 解析 Markdown
+                        const html = marked.parse(markdown);
+                        console.log('🎯 HTML 生成成功，长度:', html.length);
+                        
+                        // 渲染到页面
+                        document.getElementById('content').innerHTML = html;
+                        console.log('✅ 渲染完成');
+                        
+                        // 通知原生代码渲染成功
+                        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
+                            window.webkit.messageHandlers.renderComplete.postMessage('success');
+                        }
+                        
+                    } catch (error) {
+                        console.error('❌ 渲染错误:', error);
+                        document.getElementById('content').innerHTML = 
+                            '<p style="color: red;">渲染错误: ' + error.message + '</p>' +
+                            '<p>请检查 Markdown 格式或网络连接</p>';
                             
-                            // 调整隐藏WebView的尺寸以匹配内容
-                            hiddenWebView.frame = NSRect(x: 0, y: 0, width: finalWidth, height: finalHeight)
-                            hiddenContainer.frame = NSRect(x: -5000, y: -5000, width: finalWidth, height: finalHeight)
-                            
-                            // 等待布局更新后截图
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                                print("📸 开始对隐藏WebView截图，尺寸：\(hiddenWebView.frame.size)")
-                                
-                                // 对隐藏的WebView截图
-                                hiddenWebView.takeSnapshot(with: nil) { image, error in
-                                    DispatchQueue.main.async {
-                                        // 清理隐藏的视图
-                        hiddenContainer.removeFromSuperview()
-                        print("🧹 隐藏WebView已清理")
-                                        
-                                        if let error = error {
-                                            print("❌ 隐藏WebView截图失败：\(error.localizedDescription)")
-                                            self?.generateBackupLongImage(completion: completion)
-                                        } else if let image = image {
-                                            print("✅ 隐藏WebView截图成功，尺寸：\(image.size)")
-                                            // 可选：进一步裁剪空白区域
-                                            let trimmedImage = self?.trimWhitespace(from: image) ?? image
-                                            completion(trimmedImage)
-                                        } else {
-                                            print("❌ 隐藏WebView截图返回空图片")
-                                            self?.generateBackupLongImage(completion: completion)
-                                        }
-                                    }
-                                }
-                            }
+                        // 通知原生代码渲染失败
+                        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
+                            window.webkit.messageHandlers.renderComplete.postMessage('error: ' + error.message);
                         }
                     }
                 }
                 
-                hiddenWebView.navigationDelegate = navigationDelegate
+                // 页面加载完成后开始渲染
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', renderMarkdown);
+                } else {
+                    renderMarkdown();
+                }
                 
-                // 加载HTML内容到隐藏WebView
-                hiddenWebView.loadHTMLString(htmlContent, baseURL: nil)
-            }
-        }
+                // 设置超时处理
+                renderingTimeout = setTimeout(() => {
+                    console.warn('⏰ 渲染超时');
+                    if (document.getElementById('content').innerHTML === '正在加载...') {
+                        document.getElementById('content').innerHTML = 
+                            '<p style="color: orange;">渲染超时，可能的原因:</p>' +
+                            '<ul>' +
+                            '<li>网络连接问题</li>' +
+                            '<li>JavaScript 库加载失败</li>' +
+                            '<li>Markdown 格式复杂</li>' +
+                            '</ul>';
+                    }
+                }, 8000); // 8秒超时
+            </script>
+        </body>
+        </html>
+        """
     }
     
     // 新增：裁剪图片空白区域的辅助函数
@@ -8242,13 +8435,28 @@ class MarkdownRendererWindowController: NSWindowController {
                         const html = marked.parse(markdownText);
                         document.getElementById('content').innerHTML = html;
                         console.log('✅ Markdown渲染完成，HTML长度:', html.length);
+                        
+                        // 通知原生代码渲染完成
+                        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
+                            window.webkit.messageHandlers.renderComplete.postMessage('success');
+                        }
                     } catch (error) {
                         console.error('❌ Markdown解析失败:', error);
                         document.getElementById('content').innerHTML = '<p>Markdown解析失败: ' + error.message + '</p>';
+                        
+                        // 通知原生代码渲染失败
+                        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
+                            window.webkit.messageHandlers.renderComplete.postMessage('error: ' + error.message);
+                        }
                     }
                 }).catch(error => {
                     console.error('❌ 库加载失败:', error);
                     document.getElementById('content').innerHTML = '<p>库加载失败: ' + error.message + '</p>';
+                    
+                    // 通知原生代码库加载失败
+                    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
+                        window.webkit.messageHandlers.renderComplete.postMessage('error: ' + error.message);
+                    }
                 });
             </script>
         </body>
@@ -8326,6 +8534,21 @@ class MarkdownRendererWindowController: NSWindowController {
         
         print("📊 尺寸计算结果：宽度=\(finalWidth), 高度=\(totalHeight)")
         return NSSize(width: finalWidth, height: totalHeight)
+    }
+    
+    // 实现WKScriptMessageHandler协议
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "renderComplete" {
+            print("✅ 收到JavaScript渲染完成消息：\(message.body)")
+            
+            DispatchQueue.main.async {
+                if let handler = self.longImageCompletionHandler {
+                    let success = (message.body as? String) == "success"
+                    handler(success)
+                    self.longImageCompletionHandler = nil
+                }
+            }
+        }
     }
     
     // 渲染Markdown内容到图片
@@ -8455,6 +8678,67 @@ class MarkdownRendererWindowController: NSWindowController {
         print("✅ 备用长图生成完成，尺寸：\(image.size)")
         completion(image)
     }
+    
+    // 新增：简化HTML内容的辅助方法
+    private func simplifyHTMLForSnapshot(_ html: String) -> String {
+        var simplified = html
+        
+        // 移除不必要的脚本标签
+        simplified = simplified.replacingOccurrences(
+            of: "<script[^>]*>.*?</script>", 
+            with: "", 
+            options: [.regularExpression, .caseInsensitive]
+        )
+        
+        // 简化CSS，只保留基本样式
+        let basicCSS = """
+        <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.6; margin: 20px; }
+        pre { background: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }
+        code { background: #f0f0f0; padding: 2px 4px; border-radius: 3px; }
+        blockquote { border-left: 4px solid #ddd; margin: 0; padding-left: 20px; }
+        img { max-width: 100%; height: auto; }
+        </style>
+        """
+        
+        // 替换复杂的样式
+        if let styleRange = simplified.range(of: "<style[^>]*>.*?</style>", options: [.regularExpression, .caseInsensitive]) {
+            simplified.replaceSubrange(styleRange, with: basicCSS)
+        }
+        
+        return simplified
+    }
+    
+    // 新增：快速计算尺寸的方法
+    private func calculateDimensionsQuickly(hiddenWebView: WKWebView, completion: @escaping (CGFloat, CGFloat) -> Void) {
+        let simpleScript = """
+        (function() {
+            const body = document.body;
+            const html = document.documentElement;
+            return {
+                width: Math.max(600, body.scrollWidth),
+                height: Math.max(400, Math.max(body.scrollHeight, html.scrollHeight))
+            };
+        })()
+        """
+        
+        hiddenWebView.evaluateJavaScript(simpleScript) { result, error in
+            var width: CGFloat = 800
+            var height: CGFloat = 1000
+            
+            if let dimensions = result as? [String: Any],
+               let w = dimensions["width"] as? NSNumber,
+               let h = dimensions["height"] as? NSNumber {
+                width = min(1200, max(600, CGFloat(w.doubleValue)))
+                height = max(400, CGFloat(h.doubleValue))
+            }
+            
+            completion(width, height)
+        }
+    }
+    
+    // 移除缓存WebView的方法，改为每次创建新实例以避免状态污染
+    // 注释：之前的缓存方案可能导致WebView状态不一致，现在改为每次创建新实例
     
     private func showStatusMessage(_ message: String, color: NSColor) {
         // 创建临时状态标签
@@ -8655,6 +8939,11 @@ class MarkdownRendererWindowController: NSWindowController {
                 config.preferences.javaScriptEnabled = true
             }
             config.preferences.javaScriptCanOpenWindowsAutomatically = false
+            
+            // 添加消息处理器
+            let userContentController = WKUserContentController()
+            userContentController.add(self, name: "renderComplete")
+            config.userContentController = userContentController
             
             // 使用更大的 WebView 来确保内容完整显示
             let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 1000), configuration: config)
@@ -9009,10 +9298,7 @@ class MarkdownRendererWindowController: NSWindowController {
         
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             print("🔄 隐藏WebView加载完成")
-            // 等待一下确保渲染完成
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.onLoadComplete()
-            }
+            self.onLoadComplete()
         }
         
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
