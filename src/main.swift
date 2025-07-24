@@ -71,6 +71,25 @@ class HoverableButton: NSButton {
     private var tooltipPanel: NSPanel?
     private var feedbackPanel: NSPanel?
     private var hoverTimer: Timer?
+    private var isMouseDown = false
+    
+    // 修复：使用强引用保存原始target，防止被释放
+    private var originalTarget: AnyObject?
+    private var originalAction: Selector?
+    
+    override var target: AnyObject? {
+        didSet {
+            originalTarget = target
+            print("Target set to: \(String(describing: target))")
+        }
+    }
+    
+    override var action: Selector? {
+        didSet {
+            originalAction = action
+            print("Action set to: \(String(describing: action))")
+        }
+    }
     
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -104,6 +123,101 @@ class HoverableButton: NSButton {
         hoverTimer?.invalidate()
         hoverTimer = nil
         hideTooltip()
+        isMouseDown = false // 重置状态
+    }
+    
+    override func mouseDown(with event: NSEvent) {
+        print("HoverableButton mouseDown triggered")
+        isMouseDown = true
+        super.mouseDown(with: event)
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        print("HoverableButton mouseUp triggered")
+        super.mouseUp(with: event)
+        
+        // 只有在鼠标确实按下过的情况下才触发action
+        if isMouseDown {
+            isMouseDown = false
+            print("Mouse was down, triggering action")
+            
+            // 使用保存的target和action
+            if let target = originalTarget, let action = originalAction {
+                print("Manually triggering action: \(action) on target: \(target)")
+                _ = target.perform(action, with: self)
+            } else {
+                // 备用方案：直接通过窗口控制器调用
+                if let windowController = self.window?.windowController as? NoteWindowController {
+                    switch self.toolTip {
+                    case "设置默认笔记目录":
+                        windowController.selectDefaultPath()
+                    case "新建本地笔记":
+                        windowController.createNewNote()
+                    case "选择本地笔记":
+                        windowController.selectNote()
+                    case "保存到本地笔记":
+                        windowController.saveContent()
+                    case "保存到Blinko":
+                        windowController.saveToBlinko()
+                    case "同步到Blinko":
+                        windowController.syncToBlinko()
+                    case "改写内容":
+                        windowController.rewriteContent()
+                    default:
+                        print("Unknown button: \(String(describing: self.toolTip))")
+                    }
+                }
+            }
+        }
+    }
+    
+    // 重写这个方法来确保点击被正确处理
+    override func sendAction(_ action: Selector?, to target: Any?) -> Bool {
+        print("HoverableButton sendAction called: \(String(describing: action)) to \(String(describing: target))")
+        
+        // 优先使用保存的target和action
+        let actualTarget: AnyObject? = originalTarget ?? (target as? AnyObject)
+        let actualAction = originalAction ?? action
+        
+        print("Using actualTarget: \(String(describing: actualTarget)), actualAction: \(String(describing: actualAction))")
+        
+        if let realTarget = actualTarget, let realAction = actualAction {
+            print("Performing action: \(realAction) on target: \(realTarget)")
+            _ = realTarget.perform(realAction, with: self)
+            return true
+        }
+        
+        // 如果还是没有target，使用备用方案
+        if let windowController = self.window?.windowController as? NoteWindowController {
+            print("Using fallback method for tooltip: \(String(describing: self.toolTip))")
+            switch self.toolTip {
+            case "设置默认笔记目录":
+                windowController.selectDefaultPath()
+                return true
+            case "新建本地笔记":
+                windowController.createNewNote()
+                return true
+            case "选择本地笔记":
+                windowController.selectNote()
+                return true
+            case "保存到本地笔记":
+                windowController.saveContent()
+                return true
+            case "保存到Blinko":
+                windowController.saveToBlinko()
+                return true
+            case "同步到Blinko":
+                windowController.syncToBlinko()
+                return true
+            case "改写内容":
+                windowController.rewriteContent()
+                return true
+            default:
+                print("Unknown button: \(String(describing: self.toolTip))")
+            }
+        }
+        
+        return super.sendAction(action, to: target)
     }
     
     private func showTooltip(_ text: String) {
@@ -628,6 +742,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     }
     
     @objc func selectDefaultPath() {
+        print("selectDefaultPath method called")
         // 创建设置窗口
         let settingsWindow = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 500),
@@ -920,6 +1035,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     }
     
     @objc func createNewNote() {
+        print("createNewNote method called")
         let panel = NSSavePanel()
         if #available(macOS 12.0, *) {
             panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
@@ -944,6 +1060,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     }
     
     @objc func selectNote() {
+        print("selectNote method called")
         let panel = NSOpenPanel()
         if #available(macOS 12.0, *) {
             panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
@@ -967,6 +1084,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     }
     
     @objc func saveContent() {
+        print("saveContent method called")
         guard !NoteManager.shared.lastSelectedNote.isEmpty else {
             if let saveButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "saveContent" })?.view as? HoverableButton {
                 saveButton.showFeedback("请先选择笔记")
@@ -1049,9 +1167,6 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
         appDelegate.messages = [["role": "system", "content": appDelegate.systemPrompt]]
         appDelegate.messages.append(["role": "user", "content": currentText])
         
-        // 清空内容，准备显示 AI 改写的结果
-        contentTextView.string = ""
-        
         // 调用 API
         appDelegate.callAPI(withPrompt: "", text: currentText)
         
@@ -1061,6 +1176,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
     }
     
     @objc func saveToBlinko() {
+        print("saveToBlinko method called")
         Task {
             do {
                 let content = contentTextView.string
@@ -1298,6 +1414,7 @@ class NoteWindowController: NSWindowController, NSTableViewDataSource, NSTableVi
 
     // 在 NoteWindowController 类中添加同步方法
     @objc func syncToBlinko() {
+        print("syncToBlinko method called")
         // 检查是否有选择本地笔记
         guard !NoteManager.shared.lastSelectedNote.isEmpty else {
             if let syncButton = window?.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "syncToBlinko" })?.view as? HoverableButton {
@@ -1440,6 +1557,9 @@ extension NoteWindowController: NSToolbarDelegate {
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
             button.toolTip = "设置默认笔记目录"
+            button.isEnabled = true
+            button.wantsLayer = true
+            print("Button created - enabled: \(button.isEnabled), target: \(String(describing: button.target))")
             item.view = button
             
         case "newNote":
@@ -1455,6 +1575,9 @@ extension NoteWindowController: NSToolbarDelegate {
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
             button.toolTip = "新建本地笔记"
+            button.isEnabled = true
+            button.wantsLayer = true
+            print("Button created - enabled: \(button.isEnabled), target: \(String(describing: button.target))")
             item.view = button
             
         case "selectNote":
@@ -1470,6 +1593,9 @@ extension NoteWindowController: NSToolbarDelegate {
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
             button.toolTip = "选择本地笔记"
+            button.isEnabled = true
+            button.wantsLayer = true
+            print("Button created - enabled: \(button.isEnabled), target: \(String(describing: button.target))")
             item.view = button
             
         case "saveContent":
@@ -1485,6 +1611,9 @@ extension NoteWindowController: NSToolbarDelegate {
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
             button.toolTip = "保存到本地笔记"
+            button.isEnabled = true
+            button.wantsLayer = true
+            print("Button created - enabled: \(button.isEnabled), target: \(String(describing: button.target))")
             item.view = button
             
         case "rewriteContent":
@@ -1500,6 +1629,9 @@ extension NoteWindowController: NSToolbarDelegate {
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
             button.toolTip = "AI 改写内容"
+            button.isEnabled = true
+            button.wantsLayer = true
+            print("Button created - enabled: \(button.isEnabled), target: \(String(describing: button.target))")
             item.view = button
             
         case "syncToBlinko":
@@ -1515,6 +1647,9 @@ extension NoteWindowController: NSToolbarDelegate {
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
             button.toolTip = "同步到 Blinko"
+            button.isEnabled = true
+            button.wantsLayer = true
+            print("Button created - enabled: \(button.isEnabled), target: \(String(describing: button.target))")
             item.view = button
             
         case "saveToBlinko":
@@ -1530,6 +1665,9 @@ extension NoteWindowController: NSToolbarDelegate {
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
             button.toolTip = "保存到 Blinko"
+            button.isEnabled = true
+            button.wantsLayer = true
+            print("Button created - enabled: \(button.isEnabled), target: \(String(describing: button.target))")
             item.view = button
             
         case "createBlinkoFlash":
@@ -1545,6 +1683,9 @@ extension NoteWindowController: NSToolbarDelegate {
                 button?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
             }
             button.toolTip = "创建 Blinko 闪念"
+            button.isEnabled = true
+            button.wantsLayer = true
+            print("Button created - enabled: \(button.isEnabled), target: \(String(describing: button.target))")
             item.view = button
             
         default:
@@ -3488,6 +3629,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             }
         }
         pinButton.toolTip = "置顶窗口"
+        pinButton.isEnabled = true
+        pinButton.wantsLayer = true
+        print("Button created - enabled: \(pinButton.isEnabled), target: \(String(describing: pinButton.target))")
         titlebarButtonContainer.addArrangedSubview(pinButton)
         
         let clearButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 26))
@@ -3503,6 +3647,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             clearButton?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
         }
         clearButton.toolTip = "清除对话"
+        clearButton.isEnabled = true
+        clearButton.wantsLayer = true
+        print("Button created - enabled: \(clearButton.isEnabled), target: \(String(describing: clearButton.target))")
         titlebarButtonContainer.addArrangedSubview(clearButton)
         self.clearButton = clearButton
         
@@ -3519,6 +3666,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             copyButton?.contentTintColor = isHovered ? NSColor.systemBlue : NSColor.secondaryLabelColor
         }
         copyButton.toolTip = "复制对话"
+        copyButton.isEnabled = true
+        copyButton.wantsLayer = true
+        print("Button created - enabled: \(copyButton.isEnabled), target: \(String(describing: copyButton.target))")
         titlebarButtonContainer.addArrangedSubview(copyButton)
         
         let closeButton = HoverableButton(frame: NSRect(x: 0, y: 0, width: 32, height: 26))
@@ -3534,6 +3684,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             closeButton?.contentTintColor = isHovered ? NSColor.systemRed : NSColor.secondaryLabelColor
         }
         closeButton.toolTip = "关闭窗口"
+        closeButton.isEnabled = true
+        closeButton.wantsLayer = true
+        print("Button created - enabled: \(closeButton.isEnabled), target: \(String(describing: closeButton.target))")
         titlebarButtonContainer.addArrangedSubview(closeButton)
         
         // 创建主内容区域的视觉效果视图
@@ -5675,6 +5828,9 @@ class ImageGeneratorWindowController: NSWindowController, NSTextViewDelegate {
     
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
+        window?.makeKeyAndOrderFront(nil)
+        window?.makeFirstResponder(nil)
+        NSApp.activate(ignoringOtherApps: true)
         print("🔧 图片编辑器：窗口已显示")
         
         // 自动加载已保存的提示词
@@ -6499,6 +6655,10 @@ class MarkdownRendererWindowController: NSWindowController {
     private func setupUI() {
         guard let window = window else { return }
         
+        // 确保窗口可以接收事件
+        window.acceptsMouseMovedEvents = true
+        window.ignoresMouseEvents = false
+        
         let contentView = window.contentView!
         
         // 创建分割视图
@@ -6981,8 +7141,7 @@ class MarkdownRendererWindowController: NSWindowController {
                 hiddenContainer.addSubview(hiddenWebView)
                 
                 // 创建导航代理来监听加载完成
-                var navigationDelegate: HiddenWebViewNavigationDelegate? = nil
-                navigationDelegate = HiddenWebViewNavigationDelegate { [weak self] in
+                let navigationDelegate = HiddenWebViewNavigationDelegate { [weak self] in
                     // 等待渲染完成
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         // 使用更精确的JavaScript来计算内容尺寸
@@ -7079,10 +7238,9 @@ class MarkdownRendererWindowController: NSWindowController {
                                 // 对隐藏的WebView截图
                                 hiddenWebView.takeSnapshot(with: nil) { image, error in
                                     DispatchQueue.main.async {
-                                        // 清理隐藏的视图和代理
-                                        hiddenContainer.removeFromSuperview()
-                                        navigationDelegate = nil
-                                        print("🧹 隐藏WebView已清理")
+                                        // 清理隐藏的视图
+                        hiddenContainer.removeFromSuperview()
+                        print("🧹 隐藏WebView已清理")
                                         
                                         if let error = error {
                                             print("❌ 隐藏WebView截图失败：\(error.localizedDescription)")
