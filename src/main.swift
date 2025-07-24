@@ -6617,11 +6617,11 @@ print("Hello, Markdown!")
         renderButton = NSButton(title: "渲染", target: self, action: #selector(renderMarkdown))
         renderButton.bezelStyle = .rounded
         renderButton.keyEquivalent = "\r"
-        
+
         saveButton = NSButton(title: "保存长图", target: self, action: #selector(saveLongImage))
         saveButton.bezelStyle = .rounded
         saveButton.isEnabled = false
-        
+
         copyButton = NSButton(title: "复制长图", target: self, action: #selector(copyLongImage))
         copyButton.bezelStyle = .rounded
         copyButton.isEnabled = false
@@ -6987,111 +6987,251 @@ print("Hello, Markdown!")
         }
     }
     
-    // 从WebView生成长图 - 使用预览WebView的实际渲染内容并智能计算宽度
+    // 从WebView生成长图 - 改进的隐藏WebView方案
     private func generateLongImageFromWebView(completion: @escaping (NSImage?) -> Void) {
-        print("📸 开始生成长图...")
+        print("📸 开始生成长图（改进的隐藏WebView方案）...")
         
-        // 获取Markdown文本内容来计算最佳宽度
-        let markdownText = inputTextView.string
-        let optimalWidth = calculateOptimalWidth(for: markdownText)
-        print("📐 智能计算宽度：\(optimalWidth)")
-        
-        // 首先获取预览WebView的实际渲染高度
-        previewWebView.evaluateJavaScript("Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 600)") { [weak self] result, error in
-            guard let self = self else { return }
-            
-            if let actualHeight = result as? CGFloat {
-                print("📏 预览WebView实际高度：\(actualHeight)")
+        DispatchQueue.main.async {
+            // 首先获取当前预览WebView的HTML内容
+            self.previewWebView.evaluateJavaScript("document.documentElement.outerHTML") { htmlResult, error in
+                guard let htmlContent = htmlResult as? String else {
+                    print("❌ 无法获取HTML内容")
+                    self.generateBackupLongImage(completion: completion)
+                    return
+                }
                 
-                // 获取预览WebView的完整HTML内容
-                self.previewWebView.evaluateJavaScript("document.documentElement.outerHTML") { htmlResult, htmlError in
-                    if let htmlString = htmlResult as? String {
-                        print("📄 获取预览HTML内容成功，长度：\(htmlString.count)")
-                        
-                        // 使用智能计算的宽度和实际渲染高度
-                        let finalHeight = max(actualHeight, 600) // 确保最小高度
-                        
-                        print("📐 长图尺寸：宽度=\(optimalWidth), 高度=\(finalHeight)")
-                        
-                        // 创建临时WebView用于截图
-                        let config = WKWebViewConfiguration()
-                        config.preferences.javaScriptEnabled = true
-                        
-                        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: optimalWidth, height: finalHeight), configuration: config)
-                        
-                        // 关键：将WebView添加到主窗口的视图层次结构中（但隐藏在屏幕外）
-                        if let window = self.window {
-                            let containerView = NSView(frame: NSRect(x: -10000, y: -10000, width: optimalWidth, height: finalHeight))
-                            containerView.addSubview(webView)
-                            window.contentView?.addSubview(containerView)
-                            
-                            print("📄 临时WebView已添加到视图层次结构，尺寸：\(optimalWidth)x\(finalHeight)")
-                            
-                            // 使用优化的长图HTML模板，而不是修改预览HTML
-                            let optimizedHTML = self.createOptimizedLongImageHTML(markdownText: markdownText, width: optimalWidth)
-                            webView.loadHTMLString(optimizedHTML, baseURL: nil)
-                            
-                            // 创建导航代理来监听加载完成
-                            let navigationDelegate = LongImageNavigationDelegate { [weak webView, weak containerView] in
-                                print("📄 长图WebView加载完成")
+                // 获取当前预览WebView的实际宽度
+                let previewWidth = self.previewWebView.frame.width
+                let targetWidth = max(600, min(1200, previewWidth)) // 限制在合理范围内
+                
+                // 创建隐藏的容器视图
+                let hiddenContainer = NSView()
+                hiddenContainer.frame = NSRect(x: -5000, y: -5000, width: targetWidth, height: 1000)
+                
+                // 添加到主窗口但位置在屏幕外（用户看不到）
+                if let mainWindow = NSApplication.shared.mainWindow {
+                    mainWindow.contentView?.addSubview(hiddenContainer)
+                }
+                
+                // 创建隐藏的WebView，使用动态宽度
+                let hiddenWebView = WKWebView()
+                hiddenWebView.frame = NSRect(x: 0, y: 0, width: targetWidth, height: 1000)
+                hiddenContainer.addSubview(hiddenWebView)
+                
+                // 创建导航代理来监听加载完成
+                var navigationDelegate: HiddenWebViewNavigationDelegate? = nil
+                navigationDelegate = HiddenWebViewNavigationDelegate { [weak self] in
+                    // 等待渲染完成
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        // 使用更精确的JavaScript来计算内容尺寸
+                        let script = """
+                            (function() {
+                                // 确保所有图片都已加载
+                                const images = document.querySelectorAll('img');
+                                let loadedImages = 0;
                                 
-                                // 等待JavaScript渲染完成
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                                    guard let webView = webView else {
-                                        print("❌ WebView已释放")
-                                        containerView?.removeFromSuperview()
-                                        completion(nil)
-                                        return
+                                function calculateDimensions() {
+                                    // 获取body的实际内容尺寸
+                                    const body = document.body;
+                                    const html = document.documentElement;
+                                    
+                                    // 计算实际内容高度，排除多余的空白
+                                    const contentHeight = Math.max(
+                                        body.scrollHeight,
+                                        body.offsetHeight,
+                                        html.clientHeight,
+                                        html.scrollHeight,
+                                        html.offsetHeight
+                                    );
+                                    
+                                    // 获取最后一个有内容的元素
+                                    const allElements = document.querySelectorAll('*');
+                                    let maxBottom = 0;
+                                    
+                                    for (let element of allElements) {
+                                        if (element.offsetHeight > 0) {
+                                            const rect = element.getBoundingClientRect();
+                                            const bottom = rect.bottom + window.scrollY;
+                                            maxBottom = Math.max(maxBottom, bottom);
+                                        }
                                     }
                                     
-                                    // 检查内容是否已渲染
-                                    webView.evaluateJavaScript("document.getElementById('content').innerHTML") { result, error in
-                                        if let htmlContent = result as? String {
-                                            print("📊 WebView内容检查：\(htmlContent.prefix(100))...")
-                                            
-                                            if htmlContent.contains("正在渲染") {
-                                                print("⚠️ 内容仍在渲染中，等待更长时间")
-                                                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                                                    self.performSnapshot(webView: webView, containerView: containerView, completion: completion)
-                                                }
-                                            } else {
-                                                print("✅ 内容渲染完成，开始截图")
-                                                self.performSnapshot(webView: webView, containerView: containerView, completion: completion)
-                                            }
+                                    // 使用更保守的高度计算，添加适当的边距
+                                    const finalHeight = Math.min(contentHeight, maxBottom + 50);
+                                    
+                                    return {
+                                        width: Math.max(600, body.scrollWidth),
+                                        height: Math.max(400, finalHeight)
+                                    };
+                                }
+                                
+                                // 如果有图片，等待加载完成
+                                if (images.length > 0) {
+                                    for (let img of images) {
+                                        if (img.complete) {
+                                            loadedImages++;
                                         } else {
-                                            print("⚠️ 无法获取WebView内容，直接截图")
-                                            self.performSnapshot(webView: webView, containerView: containerView, completion: completion)
+                                            img.onload = img.onerror = function() {
+                                                loadedImages++;
+                                                if (loadedImages === images.length) {
+                                                    return calculateDimensions();
+                                                }
+                                            };
+                                        }
+                                    }
+                                    
+                                    if (loadedImages === images.length) {
+                                        return calculateDimensions();
+                                    }
+                                    
+                                    // 超时保护
+                                    setTimeout(() => calculateDimensions(), 1000);
+                                } else {
+                                    return calculateDimensions();
+                                }
+                            })()
+                        """
+                        
+                        hiddenWebView.evaluateJavaScript(script) { dimensionResult, dimensionError in
+                            var finalWidth: CGFloat = targetWidth
+                            var finalHeight: CGFloat = 1000
+                            
+                            if let dimensions = dimensionResult as? [String: Any],
+                               let width = dimensions["width"] as? NSNumber,
+                               let height = dimensions["height"] as? NSNumber {
+                                finalWidth = min(1200, max(600, CGFloat(width.doubleValue)))
+                                finalHeight = max(400, CGFloat(height.doubleValue))
+                                print("📏 计算得到的内容尺寸：宽度=\(finalWidth), 高度=\(finalHeight)")
+                            } else {
+                                print("⚠️ 无法获取精确尺寸，使用默认值")
+                            }
+                            
+                            // 调整隐藏WebView的尺寸以匹配内容
+                            hiddenWebView.frame = NSRect(x: 0, y: 0, width: finalWidth, height: finalHeight)
+                            hiddenContainer.frame = NSRect(x: -5000, y: -5000, width: finalWidth, height: finalHeight)
+                            
+                            // 等待布局更新后截图
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                print("📸 开始对隐藏WebView截图，尺寸：\(hiddenWebView.frame.size)")
+                                
+                                // 对隐藏的WebView截图
+                                hiddenWebView.takeSnapshot(with: nil) { image, error in
+                                    DispatchQueue.main.async {
+                                        // 清理隐藏的视图和代理
+                                        hiddenContainer.removeFromSuperview()
+                                        navigationDelegate = nil
+                                        print("🧹 隐藏WebView已清理")
+                                        
+                                        if let error = error {
+                                            print("❌ 隐藏WebView截图失败：\(error.localizedDescription)")
+                                            self?.generateBackupLongImage(completion: completion)
+                                        } else if let image = image {
+                                            print("✅ 隐藏WebView截图成功，尺寸：\(image.size)")
+                                            // 可选：进一步裁剪空白区域
+                                            let trimmedImage = self?.trimWhitespace(from: image) ?? image
+                                            completion(trimmedImage)
+                                        } else {
+                                            print("❌ 隐藏WebView截图返回空图片")
+                                            self?.generateBackupLongImage(completion: completion)
                                         }
                                     }
                                 }
                             }
-                            
-                            webView.navigationDelegate = navigationDelegate
-                        } else {
-                            print("❌ 无法获取主窗口")
-                            // 使用备用方案
-                            self.generateBackupLongImage(completion: completion)
                         }
-                    } else {
-                        print("❌ 无法获取预览WebView的HTML内容：\(htmlError?.localizedDescription ?? "未知错误")")
-                        // 使用备用方案
-                        self.generateBackupLongImage(completion: completion)
                     }
                 }
-            } else {
-                print("❌ 无法获取预览WebView的高度：\(error?.localizedDescription ?? "未知错误")")
-                // 使用备用方案
-                self.generateBackupLongImage(completion: completion)
+                
+                hiddenWebView.navigationDelegate = navigationDelegate
+                
+                // 加载HTML内容到隐藏WebView
+                hiddenWebView.loadHTMLString(htmlContent, baseURL: nil)
             }
         }
+    }
+    
+    // 新增：裁剪图片空白区域的辅助函数
+    private func trimWhitespace(from image: NSImage) -> NSImage {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return image
+        }
+        
+        let width = cgImage.width
+        let height = cgImage.height
+        
+        // 创建位图上下文来分析像素
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return image
+        }
+        
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        
+        guard let data = context.data else {
+            return image
+        }
+        
+        let pixels = data.bindMemory(to: UInt32.self, capacity: width * height)
+        
+        // 找到实际内容的边界（非白色像素）
+        var topBound = height
+        var bottomBound = 0
+        
+        // 从下往上扫描，找到最后一行有内容的位置
+        for y in stride(from: height - 1, through: 0, by: -1) {
+            var hasContent = false
+            for x in 0..<width {
+                let pixel = pixels[y * width + x]
+                let r = (pixel >> 24) & 0xFF
+                let g = (pixel >> 16) & 0xFF
+                let b = (pixel >> 8) & 0xFF
+                
+                // 如果不是纯白色或接近白色，认为是内容
+                if r < 250 || g < 250 || b < 250 {
+                    hasContent = true
+                    break
+                }
+            }
+            
+            if hasContent {
+                bottomBound = y + 20 // 保留一些底部边距
+                break
+            }
+        }
+        
+        // 如果没有找到内容边界，返回原图
+        if bottomBound <= 0 {
+            return image
+        }
+        
+        // 创建裁剪后的图片
+        let trimmedHeight = min(bottomBound + 1, height)
+        let trimmedRect = CGRect(x: 0, y: height - trimmedHeight, width: width, height: trimmedHeight)
+        
+        if let trimmedCGImage = cgImage.cropping(to: trimmedRect) {
+            let trimmedImage = NSImage(cgImage: trimmedCGImage, size: NSSize(width: width, height: trimmedHeight))
+            return trimmedImage
+        }
+        
+        return image
     }
     
     // 执行WebView截图的辅助函数
     private func performSnapshot(webView: WKWebView, containerView: NSView?, completion: @escaping (NSImage?) -> Void) {
         print("📸 开始截图，WebView尺寸：\(webView.frame.size)")
         
-        webView.takeSnapshot(with: nil) { image, error in
-            DispatchQueue.main.async {
+        // 使用自定义配置确保完整截图
+        let snapshotConfig = WKSnapshotConfiguration()
+        snapshotConfig.rect = CGRect(origin: .zero, size: webView.frame.size)
+        
+        webView.takeSnapshot(with: snapshotConfig) { image, error in
+                DispatchQueue.main.async {
                 // 清理临时视图
                 containerView?.removeFromSuperview()
                 print("🧹 临时视图已清理")
@@ -7106,6 +7246,207 @@ print("Hello, Markdown!")
                 }
             }
         }
+    }
+    
+    // 异步从预览WebView获取已渲染的HTML内容
+    private func getPreviewHTMLContent(completion: @escaping (String?) -> Void) {
+        self.previewWebView.evaluateJavaScript("document.documentElement.outerHTML") { result, error in
+            if let error = error {
+                print("❌ 获取预览HTML失败：\(error.localizedDescription)")
+                completion(nil)
+            } else if let html = result as? String {
+                print("✅ 成功获取预览HTML，长度：\(html.count)")
+                completion(html)
+            } else {
+                completion(nil)
+            }
+        }
+    }
+    
+    // 从预览HTML创建长图HTML
+    private func createLongImageFromPreviewHTML(previewHTML: String, width: CGFloat) -> String {
+        print("🎨 从预览HTML创建长图版本，宽度：\(width)")
+        
+        // 提取预览HTML中的内容部分
+        var contentHTML = ""
+        if let range = previewHTML.range(of: "<div class=\"markdown-body\" id=\"content\">") {
+            let startIndex = range.upperBound
+            if let endRange = previewHTML.range(of: "</div>", range: startIndex..<previewHTML.endIndex) {
+                contentHTML = String(previewHTML[startIndex..<endRange.lowerBound])
+            }
+        }
+        
+        if contentHTML.isEmpty {
+            print("⚠️ 无法提取预览内容，使用完整HTML")
+            contentHTML = previewHTML
+        }
+        
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+            
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
+                body {
+                    width: \(Int(width))px;
+                    padding: 30px;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    color: #333;
+                    background-color: #fff;
+                    overflow-wrap: break-word;
+                    word-wrap: break-word;
+                }
+                
+                .markdown-body {
+                    box-sizing: border-box;
+                    min-width: 200px;
+                    max-width: 100%;
+                    margin: 0 auto;
+                }
+                
+                .markdown-body h1,
+                .markdown-body h2,
+                .markdown-body h3,
+                .markdown-body h4,
+                .markdown-body h5,
+                .markdown-body h6 {
+                    margin-top: 24px;
+                    margin-bottom: 16px;
+                    font-weight: 600;
+                    line-height: 1.25;
+                }
+                
+                .markdown-body h1 {
+                    font-size: 2em;
+                    border-bottom: 1px solid #eaecef;
+                    padding-bottom: 0.3em;
+                }
+                
+                .markdown-body h2 {
+                    font-size: 1.5em;
+                    border-bottom: 1px solid #eaecef;
+                    padding-bottom: 0.3em;
+                }
+                
+                .markdown-body h3 {
+                    font-size: 1.25em;
+                }
+                
+                .markdown-body p {
+                    margin-bottom: 16px;
+                }
+                
+                .markdown-body ul,
+                .markdown-body ol {
+                    margin-bottom: 16px;
+                    padding-left: 2em;
+                }
+                
+                .markdown-body li {
+                    margin-bottom: 0.25em;
+                }
+                
+                .markdown-body code {
+                    padding: 0.2em 0.4em;
+                    margin: 0;
+                    font-size: 85%;
+                    background-color: rgba(175,184,193,0.2);
+                    border-radius: 6px;
+                    font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+                }
+                
+                .markdown-body pre {
+                    padding: 16px;
+                    overflow: auto;
+                    font-size: 85%;
+                    line-height: 1.45;
+                    background-color: #f6f8fa;
+                    border-radius: 6px;
+                    margin-bottom: 16px;
+                }
+                
+                .markdown-body pre code {
+                    background: transparent;
+                    border: 0;
+                    display: inline;
+                    line-height: inherit;
+                    margin: 0;
+                    max-width: auto;
+                    overflow: visible;
+                    padding: 0;
+                }
+                
+                .markdown-body blockquote {
+                    padding: 0 1em;
+                    color: #656d76;
+                    border-left: 0.25em solid #d0d7de;
+                    margin-bottom: 16px;
+                }
+                
+                .markdown-body table {
+                    border-spacing: 0;
+                    border-collapse: collapse;
+                    margin-bottom: 16px;
+                    width: 100%;
+                }
+                
+                .markdown-body table th,
+                .markdown-body table td {
+                    padding: 6px 13px;
+                    border: 1px solid #d0d7de;
+                }
+                
+                .markdown-body table th {
+                    font-weight: 600;
+                    background-color: #f6f8fa;
+                }
+                
+                .markdown-body img {
+                    max-width: 100%;
+                    height: auto;
+                }
+                
+                .markdown-body hr {
+                    border: none;
+                    height: 1px;
+                    background-color: #e9ecef;
+                    margin: 24px 0;
+                }
+                
+                /* 移除所有不必要的空白 */
+                .markdown-body > *:first-child {
+                    margin-top: 0 !important;
+                }
+                
+                .markdown-body > *:last-child {
+                    margin-bottom: 0 !important;
+                }
+                
+                /* 代码高亮样式 */
+                .hljs {
+                    background: #f6f8fa !important;
+                    color: #24292e !important;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="markdown-body">
+                \(contentHTML)
+            </div>
+        </body>
+        </html>
+        """
     }
     
     // 智能计算最佳宽度
@@ -7149,8 +7490,8 @@ print("Hello, Markdown!")
         
         // 设置合理的宽度范围和边距
         let padding: CGFloat = 60 // 左右边距总计
-        let minWidth: CGFloat = 800  // 最小宽度
-        let maxWidth: CGFloat = 1400 // 最大宽度
+        let minWidth: CGFloat = 600  // 最小宽度
+        let maxWidth: CGFloat = 1200 // 最大宽度
         
         // 计算建议宽度：基于最长行 + 边距
         let suggestedWidth = maxLineLength + padding
@@ -7161,10 +7502,10 @@ print("Hello, Markdown!")
         // 3. 中等长度则根据实际内容调整
         let finalWidth: CGFloat
         
-        if maxLineLength < 600 {
+        if maxLineLength < 400 {
             // 短文本：使用较小宽度，但不小于最小值
             finalWidth = max(minWidth, suggestedWidth)
-        } else if maxLineLength > 1200 {
+        } else if maxLineLength > 1000 {
             // 长文本：使用最大宽度，避免过宽
             finalWidth = maxWidth
         } else {
@@ -7185,14 +7526,9 @@ print("Hello, Markdown!")
     private func createOptimizedLongImageHTML(markdownText: String, width: CGFloat) -> String {
         print("📝 创建优化的长图HTML，宽度：\(width)")
         
-        // 简单转义，避免复杂的base64编码
-        let escapedMarkdown = markdownText
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "$", with: "\\$")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+        // 使用base64编码来避免JavaScript字符串转义问题
+        let markdownData = markdownText.data(using: .utf8)
+        let base64Markdown = markdownData?.base64EncodedString() ?? ""
         
         return """
         <!DOCTYPE html>
@@ -7212,9 +7548,9 @@ print("Hello, Markdown!")
                 }
                 
                 html, body {
-                    width: \(Int(width))px;
+                    width: 100%;
                     min-height: 100vh;
-                    padding: 20px;
+                    padding: 30px;
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
                     font-size: 15px;
                     line-height: 1.7;
@@ -7225,8 +7561,8 @@ print("Hello, Markdown!")
                 }
                 
                 .content {
-                    width: \(Int(width - 40))px;
-                    margin: 0;
+                    max-width: \(Int(width))px;
+                    margin: 0 auto;
                     padding: 0;
                 }
                 
@@ -7257,7 +7593,6 @@ print("Hello, Markdown!")
                 p {
                     margin: 0 0 16px 0;
                     line-height: 1.7;
-                    text-align: justify;
                 }
                 
                 ul, ol {
@@ -7332,6 +7667,11 @@ print("Hello, Markdown!")
                     margin: 24px 0;
                 }
                 
+                img {
+                    max-width: 100%;
+                    height: auto;
+                }
+                
                 /* 移除所有不必要的空白 */
                 .content > *:first-child {
                     margin-top: 0 !important;
@@ -7343,86 +7683,65 @@ print("Hello, Markdown!")
             </style>
         </head>
         <body>
-            <div class="content" id="content">正在渲染 Markdown...</div>
+            <div class="content" id="content">
+                <!-- Markdown内容将在这里渲染 -->
+            </div>
             
             <script>
-                console.log('🔄 开始 Markdown 渲染...');
-                
-                // 直接使用转义后的 Markdown 内容
-                const markdownText = "\(escapedMarkdown)";
-                
-                console.log('📝 Markdown 文本长度:', markdownText.length);
-                console.log('📝 Markdown 内容预览:', markdownText.substring(0, 50) + '...');
-                
                 // 等待库加载完成
                 function waitForLibraries() {
-                    return new Promise((resolve) => {
+                    return new Promise((resolve, reject) => {
+                        let attempts = 0;
+                        const maxAttempts = 50;
+                        
                         function checkLibraries() {
+                            attempts++;
                             if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
-                                console.log('✅ 库加载完成');
                                 resolve();
+                            } else if (attempts >= maxAttempts) {
+                                reject(new Error('库加载超时'));
                             } else {
-                                console.log('⏳ 等待库加载...');
                                 setTimeout(checkLibraries, 100);
                             }
                         }
+                        
                         checkLibraries();
                     });
                 }
                 
-                // 渲染 Markdown
-                async function renderMarkdown() {
-                    try {
-                        await waitForLibraries();
-                        
-                        // 配置 marked
-                        marked.setOptions({
-                            highlight: function(code, lang) {
-                                if (lang && hljs.getLanguage(lang)) {
+                // 渲染Markdown
+                waitForLibraries().then(() => {
+                    // 配置marked
+                    marked.setOptions({
+                        highlight: function(code, lang) {
+                            if (lang && hljs.getLanguage(lang)) {
+                                try {
                                     return hljs.highlight(code, { language: lang }).value;
-                                }
-                                return hljs.highlightAuto(code).value;
-                            },
-                            langPrefix: 'hljs language-',
-                            breaks: true
-                        });
-                        
-                        // 渲染 HTML
+                                } catch (err) {}
+                            }
+                            return hljs.highlightAuto(code).value;
+                        },
+                        breaks: true,
+                        gfm: true
+                    });
+                    
+                    // 从base64解码Markdown内容
+                    const base64Markdown = '\(base64Markdown)';
+                    const markdownText = atob(base64Markdown);
+                    console.log('📝 开始渲染Markdown，长度:', markdownText.length);
+                    
+                    try {
                         const html = marked.parse(markdownText);
                         document.getElementById('content').innerHTML = html;
-                        
-                        console.log('✅ Markdown 渲染完成');
-                        
-                        // 通知Swift渲染完成
-                        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
-                            window.webkit.messageHandlers.renderComplete.postMessage('success');
-                        }
+                        console.log('✅ Markdown渲染完成，HTML长度:', html.length);
                     } catch (error) {
-                        console.error('❌ 渲染错误:', error);
-                        document.getElementById('content').innerHTML = 
-                            '<p style="color: red;">渲染失败: ' + error.message + '</p>';
-                        
-                        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
-                            window.webkit.messageHandlers.renderComplete.postMessage('error');
-                        }
+                        console.error('❌ Markdown解析失败:', error);
+                        document.getElementById('content').innerHTML = '<p>Markdown解析失败: ' + error.message + '</p>';
                     }
-                }
-                
-                // 开始渲染
-                renderMarkdown();
-                
-                // 超时处理
-                setTimeout(() => {
-                    if (document.getElementById('content').innerText === '正在渲染 Markdown...') {
-                        console.warn('⏰ 渲染超时');
-                        document.getElementById('content').innerHTML = 
-                            '<p style="color: orange;">渲染超时，请检查网络连接和 Markdown 格式</p>';
-                        
-                        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
-                            window.webkit.messageHandlers.renderComplete.postMessage('timeout');
-                        }
-                    }
-                }, 8000);
+                }).catch(error => {
+                    console.error('❌ 库加载失败:', error);
+                    document.getElementById('content').innerHTML = '<p>库加载失败: ' + error.message + '</p>';
+                });
             </script>
         </body>
         </html>
@@ -7824,7 +8143,7 @@ print("Hello, Markdown!")
         let lines = markdownText.components(separatedBy: .newlines)
         let margin: CGFloat = 30
         let baseLineHeight: CGFloat = 25
-        let maxWidth: CGFloat = 800
+        let maxWidth: CGFloat = 1200
         let contentWidth = maxWidth - (margin * 2)
         
         var totalHeight: CGFloat = 80 // 顶部和底部边距
@@ -7868,7 +8187,7 @@ print("Hello, Markdown!")
             ]
             let attributedString = NSAttributedString(string: displayText, attributes: attributes)
             
-            // 计算在给定宽度内需要的高度
+            // 计算在给定宽度内需要的高度，考虑自动换行
             let boundingRect = attributedString.boundingRect(
                 with: NSSize(width: contentWidth, height: .greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
@@ -7882,8 +8201,8 @@ print("Hello, Markdown!")
         }
         
         // 确保最小尺寸
-        totalHeight = max(totalHeight, 400)
-        let finalWidth = max(maxUsedWidth + (margin * 2), 600)
+        totalHeight = max(totalHeight, 600)
+        let finalWidth = max(maxUsedWidth + (margin * 2), 800)
         
         print("📊 尺寸计算结果：宽度=\(finalWidth), 高度=\(totalHeight)")
         return NSSize(width: finalWidth, height: totalHeight)
@@ -7992,22 +8311,22 @@ print("Hello, Markdown!")
         renderMarkdownContent(
             markdownText: markdownText,
             in: calculatedSize,
-            margin: 30,
-            startY: calculatedSize.height - 40
+            margin: 40,
+            startY: calculatedSize.height - 50
         )
         
         // 添加水印
         let footerText = "由 AskPop Markdown 渲染器生成"
         let footerAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10),
+            .font: NSFont.systemFont(ofSize: 12),
             .foregroundColor: NSColor.gray
         ]
         let footerAttributedString = NSAttributedString(string: footerText, attributes: footerAttributes)
         let footerSize = footerAttributedString.size()
-        let footerMargin: CGFloat = 30
+        let footerMargin: CGFloat = 40
         let footerRect = NSRect(
             x: calculatedSize.width - footerSize.width - footerMargin,
-            y: 15,
+            y: 20,
             width: footerSize.width,
             height: footerSize.height
         )
@@ -8084,6 +8403,51 @@ print("Hello, Markdown!")
         return image
     }
     
+    
+    @objc private func savePDF() {
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.pdf]
+        savePanel.nameFieldStringValue = "markdown_rendered.pdf"
+        
+        savePanel.begin { [weak self] result in
+            if result == .OK, let url = savePanel.url, let webView = self?.previewWebView {
+                // 使用WebView的PDF导出功能
+                webView.evaluateJavaScript("document.documentElement.outerHTML") { [weak self] result, error in
+                    DispatchQueue.main.async {
+                        if let htmlString = result as? String {
+                            // 创建包含完整HTML的PDF内容
+                            let pdfHTML = """
+                            <!DOCTYPE html>
+                            <html>
+                            <head>
+                                <meta charset="UTF-8">
+                                <style>
+                                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+                                    @media print { body { margin: 0; padding: 20px; } }
+                                </style>
+                            </head>
+                            <body>
+                            \(htmlString)
+                            </body>
+                            </html>
+                            """
+                            
+                            // 保存HTML文件，然后可以转换为PDF
+                            do {
+                                try pdfHTML.write(to: url.appendingPathExtension("html"), atomically: true, encoding: .utf8)
+                                self?.showStatusMessage("HTML 保存成功！", color: .systemGreen)
+                            } catch {
+                                self?.showStatusMessage("保存失败：\(error.localizedDescription)", color: .systemRed)
+                            }
+                        } else {
+                            self?.showStatusMessage("保存失败：无法获取内容", color: .systemRed)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     @objc private func saveLongImage() {
         print("💾 开始保存长图...")
         
@@ -8154,50 +8518,6 @@ print("Hello, Markdown!")
         }
     }
     
-    @objc private func savePDF() {
-        let savePanel = NSSavePanel()
-        savePanel.allowedContentTypes = [.pdf]
-        savePanel.nameFieldStringValue = "markdown_rendered.pdf"
-        
-        savePanel.begin { [weak self] result in
-            if result == .OK, let url = savePanel.url, let webView = self?.previewWebView {
-                // 使用WebView的PDF导出功能
-                webView.evaluateJavaScript("document.documentElement.outerHTML") { [weak self] result, error in
-                    DispatchQueue.main.async {
-                        if let htmlString = result as? String {
-                            // 创建包含完整HTML的PDF内容
-                            let pdfHTML = """
-                            <!DOCTYPE html>
-                            <html>
-                            <head>
-                                <meta charset="UTF-8">
-                                <style>
-                                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-                                    @media print { body { margin: 0; padding: 20px; } }
-                                </style>
-                            </head>
-                            <body>
-                            \(htmlString)
-                            </body>
-                            </html>
-                            """
-                            
-                            // 保存HTML文件，然后可以转换为PDF
-                            do {
-                                try pdfHTML.write(to: url.appendingPathExtension("html"), atomically: true, encoding: .utf8)
-                                self?.showStatusMessage("HTML 保存成功！", color: .systemGreen)
-                            } catch {
-                                self?.showStatusMessage("保存失败：\(error.localizedDescription)", color: .systemRed)
-                            }
-                        } else {
-                            self?.showStatusMessage("保存失败：无法获取内容", color: .systemRed)
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
 
     
     private func renderMarkdownToImage(_ markdownText: String, completion: @escaping (NSImage?) -> Void) {
@@ -8209,7 +8529,11 @@ print("Hello, Markdown!")
             
             // 创建 WebView 配置，启用必要的功能
             let config = WKWebViewConfiguration()
-            config.preferences.javaScriptEnabled = true
+            if #available(macOS 11.0, *) {
+                // macOS 11.0+ 默认启用JavaScript，无需设置
+            } else {
+                config.preferences.javaScriptEnabled = true
+            }
             config.preferences.javaScriptCanOpenWindowsAutomatically = false
             
             // 使用更大的 WebView 来确保内容完整显示
@@ -8551,6 +8875,29 @@ print("Hello, Markdown!")
         
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             print("❌ WebView provisional navigation failed: \(error.localizedDescription)")
+        }
+    }
+    
+    // 隐藏WebView的导航代理
+    private class HiddenWebViewNavigationDelegate: NSObject, WKNavigationDelegate {
+        private let onLoadComplete: () -> Void
+        
+        init(onLoadComplete: @escaping () -> Void) {
+            self.onLoadComplete = onLoadComplete
+            super.init()
+        }
+        
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            print("🔄 隐藏WebView加载完成")
+            // 等待一下确保渲染完成
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.onLoadComplete()
+            }
+        }
+        
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            print("❌ 隐藏WebView加载失败：\(error.localizedDescription)")
+            self.onLoadComplete() // 即使失败也尝试截图
         }
     }
     
