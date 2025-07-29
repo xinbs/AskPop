@@ -91,7 +91,8 @@ if [ -f "$LOCK_FILE" ]; then
                     mode="qa"
                     ;;
             esac
-            notification_data="{\"prompt\":\"$PROMPT\",\"text\":\"base64:$ESCAPED_TEXT\",\"mode\":\"$mode\"}"
+            # 为常规模式也添加arguments字段，包含基本的命令行参数
+            notification_data="{\"prompt\":\"$PROMPT\",\"text\":\"base64:$ESCAPED_TEXT\",\"mode\":\"$mode\",\"arguments\":[\"$PROMPT\",\"base64:$ESCAPED_TEXT\"]}"
         fi
         
         # 发送分布式通知
@@ -143,4 +144,4 @@ log "后台进程 ID: $PID"
 log "-----------------------------------"
 
 # 立即返回成功状态
-exit 0 
+exit 0

@@ -3113,14 +3113,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         guard let userInfo = notification.userInfo,
               let prompt = userInfo["prompt"] as? String,
               let text = userInfo["text"] as? String else {
-            print("Invalid notification data")
+            print("Invalid notification data - userInfo: \(notification.userInfo ?? [:])")
             return
         }
         
         let mode = userInfo["mode"] as? String ?? "text"
-        let arguments = userInfo["arguments"] as? [String] ?? []
+        // 修复arguments类型转换问题
+        var arguments: [String] = []
+        if let argsArray = userInfo["arguments"] as? [Any] {
+            arguments = argsArray.compactMap { $0 as? String }
+        }
         
-        print("Notification data - prompt: \(prompt), text: \(text), mode: \(mode)")
+        print("Notification data - prompt: \(prompt), text: \(text), mode: \(mode), arguments count: \(arguments.count)")
         
         // 在主线程上处理UI操作
         DispatchQueue.main.async { [weak self] in
