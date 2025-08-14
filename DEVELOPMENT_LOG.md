@@ -5,6 +5,30 @@ All notable changes to AskPop will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- 新增 `SettingsWindow.swift` 文件，包含设置界面和 `AppSettings` 结构体
+- 新增设置界面的独立管理
+- 优化 `HoverableButton` 类的hover提示气泡自动消失机制
+
+### Changed
+- 重构 `main.swift`，移除设置界面相关代码，提高代码组织性
+- 改进代码分离，设置界面现在有独立的文件管理
+- 将所有设置界面的输入框高度从 44 像素增加到 60 像素，提升用户输入体验
+- 在 `EditableTextField` 类中添加了 `textDidBeginEditing` 和 `textDidChange` 方法
+- 实现了 `adjustTextViewHeight` 方法来动态调整内部文本编辑器的高度
+- 添加了文本垂直居中功能，提升文本显示效果
+- 优化了文本容器的尺寸和布局设置
+
+### Fixed
+- 修复设置窗口中测试链接按钮的hover提示气泡经常不会自动消失的问题
+- 改进tooltip显示逻辑，避免与反馈面板冲突
+- 添加3秒自动隐藏定时器，确保tooltip能够可靠消失
+- 优化鼠标离开事件处理，增加0.1秒延迟以提升用户体验
+
+---
+
 ## [1.1.0] - 2025-01-18
 
 ### Added

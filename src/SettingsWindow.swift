@@ -70,19 +70,21 @@ class SettingsWindowController: NSWindowController {
     private var temperatureField: EditableTextField!
     private var temperatureSwitch: NSSwitch!
     private var testConnectionButton: HoverableButton!
-    private var qaPromptField: EditableTextField!
-    private var translatePromptField: EditableTextField!
+    private var qaPromptScrollView: NSScrollView!
+    private var qaPromptTextView: NSTextView!
+    private var translatePromptScrollView: NSScrollView!
+    private var translatePromptTextView: NSTextView!
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 550),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 650),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.center()
         window.title = "AskPop 设置"
-        window.minSize = NSSize(width: 600, height: 550)
+        window.minSize = NSSize(width: 600, height: 650)
         
         // 设置现代化的窗口外观
         window.titlebarAppearsTransparent = false
@@ -120,14 +122,14 @@ class SettingsWindowController: NSWindowController {
         scrollView.autohidesScrollers = true
         contentView.addSubview(scrollView)
         
-        let documentView = NSView(frame: NSRect(x: 0, y: 0, width: max(600, scrollView.contentSize.width), height: 700))
+        let documentView = NSView(frame: NSRect(x: 0, y: 0, width: max(600, scrollView.contentSize.width), height: 750))
         documentView.autoresizingMask = [.width]
         scrollView.documentView = documentView
         
         let margin: CGFloat = 30
         let labelWidth: CGFloat = 140
         let fieldWidth: CGFloat = 400
-        let rowHeight: CGFloat = 90
+        let rowHeight: CGFloat = 110
         let sectionGap: CGFloat = 40
         var currentY: CGFloat = documentView.frame.height - 30
         
@@ -153,13 +155,13 @@ class SettingsWindowController: NSWindowController {
         apiKeyLabel.font = NSFont.systemFont(ofSize: 14)
         documentView.addSubview(apiKeyLabel)
         
-        let apiKeyDesc = NSTextField(labelWithString: "OpenAI 或其他兼容服务的 API 密钥")
+        let apiKeyDesc = NSTextField(labelWithString: "API 密钥")
         apiKeyDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
         apiKeyDesc.font = NSFont.systemFont(ofSize: 11)
         apiKeyDesc.textColor = .tertiaryLabelColor
         documentView.addSubview(apiKeyDesc)
 
-        apiKeyField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
+        apiKeyField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 25, width: fieldWidth, height: 24))
         apiKeyField.stringValue = settings.apiKey
         apiKeyField.placeholderString = "请输入您的 API Key"
         apiKeyField.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
@@ -167,7 +169,7 @@ class SettingsWindowController: NSWindowController {
         apiKeyField.autoresizingMask = [.width]
         apiKeyField.alignment = .left
         documentView.addSubview(apiKeyField)
-        currentY -= rowHeight
+        currentY -= 60
 
         // API URL
         let apiURLLabel = NSTextField(labelWithString: "API URL:")
@@ -175,13 +177,13 @@ class SettingsWindowController: NSWindowController {
         apiURLLabel.font = NSFont.systemFont(ofSize: 14)
         documentView.addSubview(apiURLLabel)
         
-        let apiURLDesc = NSTextField(labelWithString: "API 服务的完整地址")
+        let apiURLDesc = NSTextField(labelWithString: "API 地址")
         apiURLDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
         apiURLDesc.font = NSFont.systemFont(ofSize: 11)
         apiURLDesc.textColor = .tertiaryLabelColor
         documentView.addSubview(apiURLDesc)
 
-        apiURLField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
+        apiURLField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 25, width: fieldWidth, height: 24))
         apiURLField.stringValue = settings.apiURL
         apiURLField.placeholderString = "https://api.openai.com/v1/chat/completions"
         apiURLField.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
@@ -189,7 +191,7 @@ class SettingsWindowController: NSWindowController {
         apiURLField.autoresizingMask = [.width]
         apiURLField.alignment = .left
         documentView.addSubview(apiURLField)
-        currentY -= sectionGap
+        currentY -= 60
 
         // 模型配置分组
         let modelGroupLabel = NSTextField(labelWithString: "模型配置")
@@ -200,18 +202,18 @@ class SettingsWindowController: NSWindowController {
         currentY -= 30
 
         // Model
-        let modelLabel = NSTextField(labelWithString: "AI 模型:")
+        let modelLabel = NSTextField(labelWithString: "模型:")
         modelLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
         modelLabel.font = NSFont.systemFont(ofSize: 14)
         documentView.addSubview(modelLabel)
         
-        let modelDesc = NSTextField(labelWithString: "使用的 AI 模型名称")
+        let modelDesc = NSTextField(labelWithString: "AI 模型名称")
         modelDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
         modelDesc.font = NSFont.systemFont(ofSize: 11)
         modelDesc.textColor = .tertiaryLabelColor
         documentView.addSubview(modelDesc)
 
-        modelField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
+        modelField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 25, width: fieldWidth, height: 24))
         modelField.stringValue = settings.modelName
         modelField.placeholderString = "gpt-3.5-turbo, gpt-4, deepseek-chat"
         modelField.font = NSFont.systemFont(ofSize: 14)
@@ -219,21 +221,21 @@ class SettingsWindowController: NSWindowController {
         modelField.autoresizingMask = [.width]
         modelField.alignment = .left
         documentView.addSubview(modelField)
-        currentY -= rowHeight
+        currentY -= 60
 
         // Temperature
-        let temperatureLabel = NSTextField(labelWithString: "创造性温度:")
+        let temperatureLabel = NSTextField(labelWithString: "温度:")
         temperatureLabel.frame = NSRect(x: margin, y: currentY, width: labelWidth, height: 20)
         temperatureLabel.font = NSFont.systemFont(ofSize: 14)
         documentView.addSubview(temperatureLabel)
         
-        let temperatureDesc = NSTextField(labelWithString: "控制回答的随机性，0.0-2.0，越高越有创意")
+        let temperatureDesc = NSTextField(labelWithString: "控制创造性，0.0-2.0")
         temperatureDesc.frame = NSRect(x: margin, y: currentY - 18, width: 350, height: 16)
         temperatureDesc.font = NSFont.systemFont(ofSize: 11)
         temperatureDesc.textColor = .tertiaryLabelColor
         documentView.addSubview(temperatureDesc)
 
-        temperatureField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: 120, height: 44))
+        temperatureField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 25, width: 120, height: 24))
         temperatureField.stringValue = String(settings.temperature)
         temperatureField.placeholderString = "0.7"
         temperatureField.font = NSFont.systemFont(ofSize: 14)
@@ -242,14 +244,14 @@ class SettingsWindowController: NSWindowController {
         documentView.addSubview(temperatureField)
         
         // Temperature 开关
-        temperatureSwitch = NSSwitch(frame: NSRect(x: margin + labelWidth + 140, y: currentY - 30, width: 60, height: 20))
+        temperatureSwitch = NSSwitch(frame: NSRect(x: margin + labelWidth + 140, y: currentY - 22, width: 60, height: 20))
         temperatureSwitch.state = settings.enableTemperature ? .on : .off
         temperatureSwitch.target = self
         temperatureSwitch.action = #selector(temperatureSwitchChanged(_:))
         documentView.addSubview(temperatureSwitch)
         
         let switchLabel = NSTextField(labelWithString: "启用")
-        switchLabel.frame = NSRect(x: margin + labelWidth + 210, y: currentY - 28, width: 40, height: 16)
+        switchLabel.frame = NSRect(x: margin + labelWidth + 210, y: currentY - 20, width: 40, height: 16)
         switchLabel.font = NSFont.systemFont(ofSize: 12)
         switchLabel.textColor = .secondaryLabelColor
         documentView.addSubview(switchLabel)
@@ -259,7 +261,7 @@ class SettingsWindowController: NSWindowController {
         testConnectionButton.title = "测试连接模型"
         testConnectionButton.target = self
         testConnectionButton.action = #selector(testConnection)
-        testConnectionButton.frame = NSRect(x: margin + labelWidth + 260, y: currentY - 35, width: 120, height: 32)
+        testConnectionButton.frame = NSRect(x: margin + labelWidth + 260, y: currentY - 27, width: 120, height: 32)
         testConnectionButton.bezelStyle = .rounded
         testConnectionButton.font = NSFont.systemFont(ofSize: 13)
         testConnectionButton.toolTip = "测试当前配置的模型是否能正常工作"
@@ -290,15 +292,29 @@ class SettingsWindowController: NSWindowController {
         qaPromptDesc.textColor = .tertiaryLabelColor
         documentView.addSubview(qaPromptDesc)
 
-        qaPromptField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
-        qaPromptField.stringValue = settings.qaPrompt
-        qaPromptField.placeholderString = "你是一个有用的AI助手，请用中文回答："
-        qaPromptField.font = NSFont.systemFont(ofSize: 14)
-        qaPromptField.bezelStyle = .roundedBezel
-        qaPromptField.autoresizingMask = [.width]
-        qaPromptField.alignment = .left
-        documentView.addSubview(qaPromptField)
-        currentY -= rowHeight
+        // 多行问答提示词
+        qaPromptScrollView = NSScrollView(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 75, width: fieldWidth, height: 90))
+        qaPromptScrollView.hasVerticalScroller = true
+        qaPromptScrollView.hasHorizontalScroller = false
+        qaPromptScrollView.borderType = .bezelBorder
+        qaPromptScrollView.autoresizingMask = [.width]
+
+        qaPromptTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: fieldWidth, height: 90))
+        qaPromptTextView.isVerticallyResizable = true
+        qaPromptTextView.isHorizontallyResizable = false
+        qaPromptTextView.autoresizingMask = [.width]
+        qaPromptTextView.textContainer?.containerSize = NSSize(width: fieldWidth, height: .greatestFiniteMagnitude)
+        qaPromptTextView.textContainer?.widthTracksTextView = true
+        qaPromptTextView.font = NSFont.systemFont(ofSize: 14)
+        qaPromptTextView.string = settings.qaPrompt
+        qaPromptTextView.isRichText = false
+        qaPromptTextView.allowsUndo = true
+        qaPromptTextView.usesFindBar = true
+        qaPromptTextView.drawsBackground = true
+        qaPromptTextView.backgroundColor = NSColor.textBackgroundColor
+        qaPromptScrollView.documentView = qaPromptTextView
+        documentView.addSubview(qaPromptScrollView)
+        currentY -= 120
 
         // Translation Prompt
         let translatePromptLabel = NSTextField(labelWithString: "翻译提示词:")
@@ -312,15 +328,29 @@ class SettingsWindowController: NSWindowController {
         translatePromptDesc.textColor = .tertiaryLabelColor
         documentView.addSubview(translatePromptDesc)
 
-        translatePromptField = EditableTextField(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 35, width: fieldWidth, height: 44))
-        translatePromptField.stringValue = settings.translatePrompt
-        translatePromptField.placeholderString = "你是一位专业的中英互译翻译官"
-        translatePromptField.font = NSFont.systemFont(ofSize: 14)
-        translatePromptField.bezelStyle = .roundedBezel
-        translatePromptField.autoresizingMask = [.width]
-        translatePromptField.alignment = .left
-        documentView.addSubview(translatePromptField)
-        currentY -= sectionGap
+        // 多行翻译提示词
+        translatePromptScrollView = NSScrollView(frame: NSRect(x: margin + labelWidth + 10, y: currentY - 75, width: fieldWidth, height: 90))
+        translatePromptScrollView.hasVerticalScroller = true
+        translatePromptScrollView.hasHorizontalScroller = false
+        translatePromptScrollView.borderType = .bezelBorder
+        translatePromptScrollView.autoresizingMask = [.width]
+
+        translatePromptTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: fieldWidth, height: 90))
+        translatePromptTextView.isVerticallyResizable = true
+        translatePromptTextView.isHorizontallyResizable = false
+        translatePromptTextView.autoresizingMask = [.width]
+        translatePromptTextView.textContainer?.containerSize = NSSize(width: fieldWidth, height: .greatestFiniteMagnitude)
+        translatePromptTextView.textContainer?.widthTracksTextView = true
+        translatePromptTextView.font = NSFont.systemFont(ofSize: 14)
+        translatePromptTextView.string = settings.translatePrompt
+        translatePromptTextView.isRichText = false
+        translatePromptTextView.allowsUndo = true
+        translatePromptTextView.usesFindBar = true
+        translatePromptTextView.drawsBackground = true
+        translatePromptTextView.backgroundColor = NSColor.textBackgroundColor
+        translatePromptScrollView.documentView = translatePromptTextView
+        documentView.addSubview(translatePromptScrollView)
+        currentY -= 130
 
         // 历史记录配置分组
         let historyGroupLabel = NSTextField(labelWithString: "历史记录管理")
@@ -417,8 +447,8 @@ class SettingsWindowController: NSWindowController {
         temperatureField.stringValue = String(settings.temperature)
         temperatureSwitch.state = settings.enableTemperature ? .on : .off
         temperatureField.isEnabled = settings.enableTemperature
-        qaPromptField.stringValue = settings.qaPrompt
-        translatePromptField.stringValue = settings.translatePrompt
+        qaPromptTextView.string = settings.qaPrompt
+        translatePromptTextView.string = settings.translatePrompt
         
         // 确保输入框的对齐和自适应属性
         apiKeyField.autoresizingMask = [.width]
@@ -428,10 +458,8 @@ class SettingsWindowController: NSWindowController {
         modelField.autoresizingMask = [.width]
         modelField.alignment = .left
         temperatureField.alignment = .center
-        qaPromptField.autoresizingMask = [.width]
-        qaPromptField.alignment = .left
-        translatePromptField.autoresizingMask = [.width]
-        translatePromptField.alignment = .left
+        qaPromptScrollView.autoresizingMask = [.width]
+        translatePromptScrollView.autoresizingMask = [.width]
         
         // 更新自动删除下拉框
         let currentDays = settings.autoDeleteDays
@@ -629,8 +657,10 @@ class SettingsWindowController: NSWindowController {
         SettingsManager.shared.settings.modelName = modelField.stringValue.isEmpty ? "gpt-3.5-turbo" : modelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         SettingsManager.shared.settings.temperature = max(0.0, min(2.0, temperatureValue))
         SettingsManager.shared.settings.enableTemperature = temperatureSwitch.state == .on
-        SettingsManager.shared.settings.qaPrompt = qaPromptField.stringValue.isEmpty ? "你是一个有用的AI助手，请用中文回答：" : qaPromptField.stringValue
-        SettingsManager.shared.settings.translatePrompt = translatePromptField.stringValue.isEmpty ? "你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文" : translatePromptField.stringValue
+        let qaText = qaPromptTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trText = translatePromptTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        SettingsManager.shared.settings.qaPrompt = qaText.isEmpty ? "你是一个有用的AI助手，请用中文回答：" : qaText
+        SettingsManager.shared.settings.translatePrompt = trText.isEmpty ? "你是一位专业的中英互译翻译官，请把中文译成英文，英文译成中文" : trText
         
         // 保存自动删除设置
         let selectedIndex = autoDeletePopUp.indexOfSelectedItem

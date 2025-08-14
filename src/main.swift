@@ -24,7 +24,88 @@ extension Notification.Name {
     static let historyDidUpdate = Notification.Name("historyDidUpdate")
 }
 
+// 自定义文本字段单元格，支持垂直居中
+class VerticallycenteredTextFieldCell: NSTextFieldCell {
+    
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        let originalRect = super.drawingRect(forBounds: rect)
+        
+        // 计算文本的实际高度
+        let font = self.font ?? NSFont.systemFont(ofSize: 14)
+        let lineHeight = font.ascender - font.descender + font.leading
+        
+        // 计算垂直居中的位置
+        let verticalPadding = max(0, (rect.height - lineHeight) / 2)
+        
+        return NSRect(
+            x: originalRect.origin.x,
+            y: originalRect.origin.y + verticalPadding,
+            width: originalRect.width,
+            height: min(lineHeight, originalRect.height)
+        )
+    }
+    
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        return drawingRect(forBounds: rect)
+    }
+    
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        let newRect = drawingRect(forBounds: rect)
+        super.edit(withFrame: newRect, in: controlView, editor: textObj, delegate: delegate, event: event)
+    }
+    
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
+        let newRect = drawingRect(forBounds: rect)
+        super.select(withFrame: newRect, in: controlView, editor: textObj, delegate: delegate, start: selStart, length: selLength)
+    }
+}
+
 class EditableTextField: NSTextField {
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupTextField()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupTextField()
+    }
+    
+    private func setupTextField() {
+        // 确保文本框基本的可编辑属性
+        self.isEditable = true
+        self.isSelectable = true
+        self.isBordered = true
+        self.drawsBackground = true
+        
+        // 使用自定义的垂直居中单元格
+        self.cell = VerticallycenteredTextFieldCell()
+        
+        // 设置基本属性
+        if let cell = self.cell as? VerticallycenteredTextFieldCell {
+            cell.stringValue = self.stringValue
+            cell.placeholderString = self.placeholderString
+            cell.font = self.font
+            cell.alignment = self.alignment
+            cell.bezelStyle = self.bezelStyle
+            cell.drawsBackground = true
+            cell.backgroundColor = self.backgroundColor
+            cell.textColor = self.textColor
+            cell.isEnabled = true
+            cell.isEditable = true
+            cell.isSelectable = true
+            cell.wraps = false
+            cell.isScrollable = true
+            cell.usesSingleLineMode = true
+        }
+    }
+    
+    override func awakeFromNib() {
+        super.awakeFromNib()
+        setupTextField()
+    }
+    
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command) {
             switch event.charactersIgnoringModifiers {
@@ -108,9 +189,10 @@ class HoverableButton: NSButton {
         hoverHandler?(true)
         hoverTimer?.invalidate()
         
+        // 只有在没有反馈面板显示时才显示tooltip
         if feedbackPanel == nil {
             hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-                if let tooltip = self?.toolTip {
+                if let tooltip = self?.toolTip, self?.feedbackPanel == nil {
                     self?.showTooltip(tooltip)
                 }
             }
@@ -120,9 +202,16 @@ class HoverableButton: NSButton {
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         hoverHandler?(false)
+        
+        // 立即取消hover定时器
         hoverTimer?.invalidate()
         hoverTimer = nil
-        hideTooltip()
+        
+        // 延迟隐藏tooltip，给用户一点时间
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.hideTooltip()
+        }
+        
         isMouseDown = false // 重置状态
     }
     
@@ -221,6 +310,9 @@ class HoverableButton: NSButton {
     }
     
     private func showTooltip(_ text: String) {
+        // 如果已经有tooltip显示，先隐藏
+        hideTooltip()
+        
         let feedback = NSTextField(frame: .zero)
         feedback.stringValue = text
         feedback.isEditable = false
@@ -265,11 +357,20 @@ class HoverableButton: NSButton {
         panel.orderFront(nil)
         
         tooltipPanel = panel
+        
+        // 设置自动隐藏定时器，3秒后自动消失
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(hideTooltipDelayed), object: nil)
+        perform(#selector(hideTooltipDelayed), with: nil, afterDelay: 3.0)
     }
     
     private func hideTooltip() {
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(hideTooltipDelayed), object: nil)
         tooltipPanel?.close()
         tooltipPanel = nil
+    }
+    
+    @objc private func hideTooltipDelayed() {
+        hideTooltip()
     }
     
     // 公开方法供外部调用
