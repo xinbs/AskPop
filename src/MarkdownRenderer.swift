@@ -53,6 +53,12 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
     private var scrollView: NSScrollView!
     private var currentMarkdownText: String?
     
+    // 水印设置相关属性
+    private var watermarkTextField: NSTextField!
+    private var watermarkEnabledSwitch: NSButton!
+    private var watermarkText: String = "由 AskPop 生成"
+    private var watermarkEnabled: Bool = true
+    
     // 添加属性来存储完成回调
     private var longImageCompletionHandler: ((Bool) -> Void)?
     
@@ -86,6 +92,9 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
     
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
+        
+        // 加载水印设置
+        loadWatermarkSettings()
         
         // 确保文本视图可以接收焦点
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -171,6 +180,49 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         
         leftContainer.addSubview(scrollView)
         
+        // 水印设置区域
+        let watermarkContainer = NSView()
+        watermarkContainer.translatesAutoresizingMaskIntoConstraints = false
+        watermarkContainer.wantsLayer = true
+        watermarkContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+        watermarkContainer.layer?.cornerRadius = 6
+        
+        let watermarkLabel = NSTextField(labelWithString: "🎨 水印设置")
+        watermarkLabel.translatesAutoresizingMaskIntoConstraints = false
+        watermarkLabel.font = NSFont.boldSystemFont(ofSize: 12)
+        watermarkLabel.textColor = NSColor.secondaryLabelColor
+        watermarkContainer.addSubview(watermarkLabel)
+        
+        // 水印开关
+        watermarkEnabledSwitch = NSButton()
+        watermarkEnabledSwitch.translatesAutoresizingMaskIntoConstraints = false
+        watermarkEnabledSwitch.setButtonType(.switch)
+        watermarkEnabledSwitch.title = "启用水印"
+        watermarkEnabledSwitch.state = watermarkEnabled ? .on : .off
+        watermarkEnabledSwitch.font = NSFont.systemFont(ofSize: 11)
+        watermarkEnabledSwitch.target = self
+        watermarkEnabledSwitch.action = #selector(watermarkEnabledChanged)
+        watermarkContainer.addSubview(watermarkEnabledSwitch)
+        
+        // 水印文字输入框
+        watermarkTextField = NSTextField()
+        watermarkTextField.translatesAutoresizingMaskIntoConstraints = false
+        watermarkTextField.stringValue = watermarkText
+        watermarkTextField.placeholderString = "输入水印文字..."
+        watermarkTextField.font = NSFont.systemFont(ofSize: 11)
+        watermarkTextField.target = self
+        watermarkTextField.action = #selector(watermarkTextChanged)
+        watermarkContainer.addSubview(watermarkTextField)
+        
+        // 水印预览标签
+        let watermarkPreviewLabel = NSTextField(labelWithString: "💧 将显示在长图右下角")
+        watermarkPreviewLabel.translatesAutoresizingMaskIntoConstraints = false
+        watermarkPreviewLabel.font = NSFont.systemFont(ofSize: 10)
+        watermarkPreviewLabel.textColor = NSColor.tertiaryLabelColor
+        watermarkContainer.addSubview(watermarkPreviewLabel)
+        
+        leftContainer.addSubview(watermarkContainer)
+        
         // 按钮区域
         let buttonStack = NSStackView()
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
@@ -240,7 +292,30 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
             scrollView.topAnchor.constraint(equalTo: inputLabel.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: leftContainer.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: leftContainer.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: buttonStack.topAnchor, constant: -8),
+            scrollView.bottomAnchor.constraint(equalTo: watermarkContainer.topAnchor, constant: -12),
+            
+            // 水印容器约束
+            watermarkContainer.leadingAnchor.constraint(equalTo: leftContainer.leadingAnchor),
+            watermarkContainer.trailingAnchor.constraint(equalTo: leftContainer.trailingAnchor),
+            watermarkContainer.bottomAnchor.constraint(equalTo: buttonStack.topAnchor, constant: -8),
+            watermarkContainer.heightAnchor.constraint(equalToConstant: 80),
+            
+            // 水印内部约束
+            watermarkLabel.topAnchor.constraint(equalTo: watermarkContainer.topAnchor, constant: 8),
+            watermarkLabel.leadingAnchor.constraint(equalTo: watermarkContainer.leadingAnchor, constant: 12),
+            
+            watermarkEnabledSwitch.topAnchor.constraint(equalTo: watermarkLabel.bottomAnchor, constant: 4),
+            watermarkEnabledSwitch.leadingAnchor.constraint(equalTo: watermarkContainer.leadingAnchor, constant: 12),
+            watermarkEnabledSwitch.widthAnchor.constraint(equalToConstant: 80),
+            
+            watermarkTextField.topAnchor.constraint(equalTo: watermarkLabel.bottomAnchor, constant: 4),
+            watermarkTextField.leadingAnchor.constraint(equalTo: watermarkEnabledSwitch.trailingAnchor, constant: 8),
+            watermarkTextField.trailingAnchor.constraint(equalTo: watermarkContainer.trailingAnchor, constant: -12),
+            watermarkTextField.heightAnchor.constraint(equalToConstant: 22),
+            
+            watermarkPreviewLabel.topAnchor.constraint(equalTo: watermarkTextField.bottomAnchor, constant: 4),
+            watermarkPreviewLabel.leadingAnchor.constraint(equalTo: watermarkContainer.leadingAnchor, constant: 12),
+            watermarkPreviewLabel.trailingAnchor.constraint(equalTo: watermarkContainer.trailingAnchor, constant: -12),
             
             buttonStack.leadingAnchor.constraint(equalTo: leftContainer.leadingAnchor),
             buttonStack.trailingAnchor.constraint(equalTo: leftContainer.trailingAnchor),
@@ -555,6 +630,44 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         }
     }
     
+    // MARK: - 水印设置处理
+    
+    @objc private func watermarkEnabledChanged(_ sender: NSButton) {
+        watermarkEnabled = sender.state == .on
+        watermarkTextField.isEnabled = watermarkEnabled
+        print("💧 水印状态已更改: \(watermarkEnabled ? "启用" : "禁用")")
+        
+        // 保存设置到 UserDefaults
+        UserDefaults.standard.set(watermarkEnabled, forKey: "MarkdownRenderer.WatermarkEnabled")
+    }
+    
+    @objc private func watermarkTextChanged(_ sender: NSTextField) {
+        watermarkText = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if watermarkText.isEmpty {
+            watermarkText = "由 AskPop 生成"
+            sender.stringValue = watermarkText
+        }
+        print("💧 水印文字已更改: \(watermarkText)")
+        
+        // 保存设置到 UserDefaults
+        UserDefaults.standard.set(watermarkText, forKey: "MarkdownRenderer.WatermarkText")
+    }
+    
+    // 加载水印设置
+    private func loadWatermarkSettings() {
+        watermarkEnabled = UserDefaults.standard.bool(forKey: "MarkdownRenderer.WatermarkEnabled") || UserDefaults.standard.object(forKey: "MarkdownRenderer.WatermarkEnabled") == nil
+        watermarkText = UserDefaults.standard.string(forKey: "MarkdownRenderer.WatermarkText") ?? "由 AskPop 生成"
+        
+        // 更新UI
+        if let switchButton = watermarkEnabledSwitch {
+            switchButton.state = watermarkEnabled ? .on : .off
+        }
+        if let textField = watermarkTextField {
+            textField.stringValue = watermarkText
+            textField.isEnabled = watermarkEnabled
+        }
+    }
+    
     // MARK: - 状态消息显示
     
     private func showStatusMessage(_ message: String, color: NSColor) {
@@ -568,18 +681,22 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
     }
     
     private func createAndShowStatusWindow(message: String, color: NSColor) {
-        // 创建状态窗口
-        let statusWindow = NSWindow(
+        // 创建状态窗口 - 使用自定义窗口类确保不会影响应用生命周期
+        let statusWindow = StatusMessageWindow(
             contentRect: NSRect(x: 0, y: 0, width: 300, height: 80),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
         
+        // 关键设置：确保状态窗口不会影响应用生命周期
         statusWindow.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.95)
         statusWindow.level = .floating
         statusWindow.isOpaque = false
         statusWindow.hasShadow = true
+        statusWindow.hidesOnDeactivate = false
+        statusWindow.isReleasedWhenClosed = true    // 🔑 关键：关闭时自动释放
+        statusWindow.ignoresMouseEvents = true      // 🔑 关键：忽略鼠标事件，避免意外交互
         statusWindow.center()
         
         // 创建内容视图
@@ -605,13 +722,15 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         contentView.addSubview(messageLabel)
         statusWindow.contentView = contentView
         
-        // 显示窗口
-        statusWindow.makeKeyAndOrderFront(nil)
-        statusWindow.orderFrontRegardless()
+        // 🔑 关键修复：不要让状态窗口成为key window，只是简单显示
+        statusWindow.orderFront(nil)  // 改用 orderFront 而不是 makeKeyAndOrderFront
         
-        // 2秒后自动关闭
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            statusWindow.close()
+        print("💬 状态窗口已显示：\(message)")
+        
+        // 2秒后自动关闭 - 使用弱引用避免潜在的循环引用
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak statusWindow] in
+            statusWindow?.orderOut(nil)  // 使用 orderOut 而不是 close，更温和
+            print("💬 状态窗口已自动隐藏")
         }
     }
     
@@ -649,20 +768,28 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
                 window.contentView?.addSubview(containerView)
             }
             
-            // 设置15秒超时
-            let timeoutTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { _ in
+            // 设置15秒超时 - 使用弱引用避免循环引用
+            let timeoutTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
                 print("⏰ [超时] 长图生成超时，使用备用方案")
                 containerView.removeFromSuperview()
+                
+                // 清理完成回调，释放内存
+                self.longImageCompletionHandler = nil
+                
                 self.generateBackupLongImage(completion: completion)
             }
             
             // 存储WebView引用和完成回调，用于消息处理
             var isCompleted = false
-            let handleCompletion = { (image: NSImage?) in
-                guard !isCompleted else { return }
+            let handleCompletion = { [weak self] (image: NSImage?) in
+                guard let self = self, !isCompleted else { return }
                 isCompleted = true
                 timeoutTimer.invalidate()
                 containerView.removeFromSuperview()
+                
+                // 清理完成回调，释放内存
+                self.longImageCompletionHandler = nil
                 
                 let totalTime = Date().timeIntervalSince(startTime)
                 if let image = image {
@@ -674,8 +801,9 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
                 }
             }
             
-            // 创建导航代理
-            let navigationDelegate = LongImageNavigationDelegate {
+            // 创建导航代理 - 使用弱引用避免循环引用
+            let navigationDelegate = LongImageNavigationDelegate { [weak self] in
+                guard let self = self else { return }
                 print("🎯 长图WebView加载完成")
                 
                 // 等待JavaScript渲染完成，如果没有收到renderComplete消息，则使用延迟截图
@@ -694,8 +822,13 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
             print("🌐 [步骤1] 开始加载HTML到长图WebView")
             webView.loadHTMLString(htmlContent, baseURL: nil)
             
-            // 存储回调供消息处理器使用
-            self.longImageCompletionHandler = { success in
+            // 存储回调供消息处理器使用 - 使用弱引用避免循环引用
+            self.longImageCompletionHandler = { [weak self] success in
+                guard let self = self else {
+                    handleCompletion(nil)
+                    return
+                }
+                
                 if success {
                     print("✅ 收到JavaScript渲染完成消息")
                     self.performLongImageSnapshot(webView: webView, targetWidth: targetWidth, completion: handleCompletion)
@@ -977,8 +1110,11 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         print("📐 计算得出最优尺寸：\(calculatedSize)")
         
         // 创建备用图片（纯文本渲染）
-        let image = createBackupImage(markdownText: markdownText, size: calculatedSize)
-        completion(image)
+        let originalImage = createBackupImage(markdownText: markdownText, size: calculatedSize)
+        
+        // 添加水印
+        let finalImage = addWatermarkToImage(originalImage)
+        completion(finalImage)
     }
     
     // 智能计算最佳宽度
@@ -1180,7 +1316,10 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         
         generateLongImageFromWebView { [weak self] image in
             DispatchQueue.main.async {
-                if let image = image {
+                if let originalImage = image {
+                    // 添加水印
+                    let finalImage = self?.addWatermarkToImage(originalImage) ?? originalImage
+                    
                     let savePanel = NSSavePanel()
                     if #available(macOS 11.0, *) {
                         savePanel.allowedContentTypes = [.png]
@@ -1191,7 +1330,7 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
                     
                     savePanel.begin { result in
                         if result == .OK, let url = savePanel.url {
-                            if let imageData = image.tiffRepresentation,
+                            if let imageData = finalImage.tiffRepresentation,
                                let bitmapImage = NSBitmapImageRep(data: imageData),
                                let pngData = bitmapImage.representation(using: .png, properties: [:]) {
                                 do {
@@ -1218,14 +1357,18 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         
         generateLongImageFromWebView { [weak self] image in
             DispatchQueue.main.async {
-                if let image = image {
+                if let originalImage = image {
+                    // 添加水印
+                    let finalImage = self?.addWatermarkToImage(originalImage) ?? originalImage
+                    
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     
                     // 只复制图片对象（推荐方式，兼容性最好）
-                    if pasteboard.writeObjects([image]) {
-                        self?.showStatusMessage("长图已复制到剪贴板！", color: .systemGreen)
-                        print("✅ 长图复制成功")
+                    if pasteboard.writeObjects([finalImage]) {
+                        let watermarkStatus = self?.watermarkEnabled == true ? " (已添加水印)" : ""
+                        self?.showStatusMessage("长图已复制到剪贴板！\(watermarkStatus)", color: .systemGreen)
+                        print("✅ 长图复制成功\(watermarkStatus)")
                     } else {
                         self?.showStatusMessage("复制失败", color: .systemRed)
                         print("❌ 长图复制失败")
@@ -1314,6 +1457,191 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         // 注意：这是同步实现，实际应该异步处理
         // 这里返回HTML数据作为PDF的替代方案
         return pdfHTML.data(using: .utf8)
+    }
+    
+    // MARK: - 水印处理功能
+    
+    // 为图片添加优雅的水印
+    private func addWatermarkToImage(_ originalImage: NSImage) -> NSImage {
+        guard watermarkEnabled && !watermarkText.isEmpty else {
+            return originalImage
+        }
+        
+        let imageSize = originalImage.size
+        
+        // 验证图片尺寸
+        guard imageSize.width > 0 && imageSize.height > 0 else {
+            print("⚠️ 图片尺寸无效，跳过水印添加")
+            return originalImage
+        }
+        
+        let watermarkImage = NSImage(size: imageSize)
+        
+        // 使用autoreleasepool确保内存正确管理
+        autoreleasepool {
+            watermarkImage.lockFocus()
+            defer { watermarkImage.unlockFocus() }
+            
+            // 绘制原始图片
+            originalImage.draw(in: NSRect(origin: .zero, size: imageSize))
+            
+            // 设计水印样式
+            let fontSize: CGFloat = max(12, min(imageSize.width / 50, 16)) // 根据图片大小动态调整字体
+            let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+            
+            // 创建带阴影的水印文字
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.3)
+            shadow.shadowOffset = NSSize(width: 1, height: -1)
+            shadow.shadowBlurRadius = 2
+            
+            let watermarkAttributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor.white.withAlphaComponent(0.8),
+                .shadow: shadow
+            ]
+            
+            let watermarkString = NSAttributedString(string: watermarkText, attributes: watermarkAttributes)
+            let textSize = watermarkString.size()
+            
+            // 验证文字尺寸
+            guard textSize.width > 0 && textSize.height > 0 else {
+                print("⚠️ 文字尺寸无效，跳过水印添加")
+                return
+            }
+            
+            // 创建带背景的水印区域
+            let padding: CGFloat = 8
+            let backgroundWidth = textSize.width + padding * 2
+            let backgroundHeight = textSize.height + padding * 2
+            
+            // 水印位置 - 右下角，留出边距
+            let margin: CGFloat = 20
+            let watermarkX = imageSize.width - backgroundWidth - margin
+            let watermarkY = margin
+            
+            // 验证水印位置
+            guard watermarkX >= 0 && watermarkY >= 0 else {
+                print("⚠️ 水印位置超出图片范围，跳过水印添加")
+                return
+            }
+            
+            // 绘制半透明背景
+            let backgroundRect = NSRect(
+                x: watermarkX,
+                y: watermarkY,
+                width: backgroundWidth,
+                height: backgroundHeight
+            )
+            
+            // 创建圆角矩形路径
+            let backgroundPath = NSBezierPath(roundedRect: backgroundRect, xRadius: 4, yRadius: 4)
+            
+            // 绘制渐变背景 - 使用更安全的方式
+            if let gradient = NSGradient(colors: [
+                NSColor.black.withAlphaComponent(0.4),
+                NSColor.black.withAlphaComponent(0.2)
+            ]) {
+                gradient.draw(in: backgroundPath, angle: 45)
+            } else {
+                // 如果渐变创建失败，使用纯色背景
+                NSColor.black.withAlphaComponent(0.3).setFill()
+                backgroundPath.fill()
+            }
+            
+            // 绘制边框
+            NSGraphicsContext.saveGraphicsState()
+            NSColor.white.withAlphaComponent(0.3).setStroke()
+            backgroundPath.lineWidth = 0.5
+            backgroundPath.stroke()
+            NSGraphicsContext.restoreGraphicsState()
+            
+            // 绘制水印文字
+            let textRect = NSRect(
+                x: watermarkX + padding,
+                y: watermarkY + padding,
+                width: textSize.width,
+                height: textSize.height
+            )
+            
+            watermarkString.draw(in: textRect)
+            
+            // 添加小图标（可选）
+            let iconSize: CGFloat = fontSize * 0.8
+            let iconRect = NSRect(
+                x: watermarkX + padding - iconSize - 4,
+                y: watermarkY + padding + (textSize.height - iconSize) / 2,
+                width: iconSize,
+                height: iconSize
+            )
+            
+            // 绘制一个简单的水滴图标
+            NSGraphicsContext.saveGraphicsState()
+            drawWaterDropIcon(in: iconRect)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        
+        print("💧 已添加水印: \(watermarkText)")
+        return watermarkImage
+    }
+    
+    // 绘制水滴图标
+    private func drawWaterDropIcon(in rect: NSRect) {
+        // 验证绘制区域
+        guard rect.width > 0 && rect.height > 0 else {
+            print("⚠️ 水滴图标绘制区域无效")
+            return
+        }
+        
+        let dropPath = NSBezierPath()
+        
+        // 创建水滴形状
+        let centerX = rect.midX
+        let centerY = rect.midY
+        let radius = min(rect.width, rect.height) / 2
+        
+        // 验证半径
+        guard radius > 0 else {
+            print("⚠️ 水滴图标半径无效")
+            return
+        }
+        
+        // 水滴的下半部分（圆形）
+        dropPath.appendArc(
+            withCenter: NSPoint(x: centerX, y: centerY - radius * 0.2),
+            radius: radius * 0.7,
+            startAngle: 0,
+            endAngle: 180,
+            clockwise: false
+        )
+        
+        // 水滴的上半部分（尖端）
+        dropPath.line(to: NSPoint(x: centerX, y: centerY + radius * 0.8))
+        dropPath.close()
+        
+        // 填充水滴 - 使用安全的颜色设置
+        NSGraphicsContext.saveGraphicsState()
+        NSColor.systemBlue.withAlphaComponent(0.6).setFill()
+        dropPath.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        
+        // 添加高光效果
+        let highlightRadius = radius * 0.2
+        guard highlightRadius > 0 else { return }
+        
+        let highlightPath = NSBezierPath()
+        highlightPath.appendArc(
+            withCenter: NSPoint(x: centerX - radius * 0.3, y: centerY),
+            radius: highlightRadius,
+            startAngle: 0,
+            endAngle: 360,
+            clockwise: false
+        )
+        
+        NSGraphicsContext.saveGraphicsState()
+        NSColor.white.withAlphaComponent(0.8).setFill()
+        highlightPath.fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
     
     // MARK: - 图片处理相关的辅助方法
@@ -1489,5 +1817,35 @@ private class LongImageNavigationDelegate: NSObject, WKNavigationDelegate {
     
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         print("❌ 长图WebView provisional navigation failed: \(error.localizedDescription)")
+    }
+}
+
+// MARK: - 自定义状态窗口类
+
+// 专门用于状态消息的窗口类，确保不会影响应用生命周期
+private class StatusMessageWindow: NSWindow {
+    
+    override var canBecomeKey: Bool {
+        return false  // 永远不能成为key window
+    }
+    
+    override var canBecomeMain: Bool {
+        return false  // 永远不能成为main window
+    }
+    
+    override func becomeKey() {
+        // 什么都不做，阻止成为key window
+    }
+    
+    override func becomeMain() {
+        // 什么都不做，阻止成为main window
+    }
+    
+    override func resignKey() {
+        // 什么都不做，因为本来就不应该是key window
+    }
+    
+    override func resignMain() {
+        // 什么都不做，因为本来就不应该是main window
     }
 }
