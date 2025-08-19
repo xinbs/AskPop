@@ -212,6 +212,15 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         watermarkTextField.font = NSFont.systemFont(ofSize: 11)
         watermarkTextField.target = self
         watermarkTextField.action = #selector(watermarkTextChanged)
+        
+        // 🔑 关键修复：添加实时编辑监听
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(watermarkTextDidChange(_:)),
+            name: NSControl.textDidChangeNotification,
+            object: watermarkTextField
+        )
+        
         watermarkContainer.addSubview(watermarkTextField)
         
         // 水印预览标签
@@ -651,6 +660,29 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
         
         // 保存设置到 UserDefaults
         UserDefaults.standard.set(watermarkText, forKey: "MarkdownRenderer.WatermarkText")
+    }
+    
+    // 🔑 关键修复：实时监听文本输入变化
+    @objc private func watermarkTextDidChange(_ notification: Notification) {
+        guard let textField = notification.object as? NSTextField else { return }
+        
+        let newText = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalText = newText.isEmpty ? "由 AskPop 生成" : newText
+        
+        // 实时更新实例变量
+        watermarkText = finalText
+        
+        // 保存设置到 UserDefaults
+        UserDefaults.standard.set(watermarkText, forKey: "MarkdownRenderer.WatermarkText")
+        
+        print("💧 水印文字实时更新: \(watermarkText)")
+    }
+    
+    // 内存清理
+    deinit {
+        // 清理通知观察者，避免内存泄漏
+        NotificationCenter.default.removeObserver(self, name: NSControl.textDidChangeNotification, object: watermarkTextField)
+        print("🧹 MarkdownRendererWindowController 已清理")
     }
     
     // 加载水印设置
@@ -1314,6 +1346,9 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
     @objc private func saveLongImage() {
         print("💾 开始保存长图...")
         
+        // 🔑 关键修复：在保存图片前重新加载最新的水印设置
+        loadWatermarkSettings()
+        
         generateLongImageFromWebView { [weak self] image in
             DispatchQueue.main.async {
                 if let originalImage = image {
@@ -1354,6 +1389,9 @@ class MarkdownRendererWindowController: NSWindowController, WKScriptMessageHandl
     
     @objc private func copyLongImage() {
         print("📋 开始复制长图...")
+        
+        // 🔑 关键修复：在复制图片前重新加载最新的水印设置
+        loadWatermarkSettings()
         
         generateLongImageFromWebView { [weak self] image in
             DispatchQueue.main.async {
