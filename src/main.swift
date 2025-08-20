@@ -3074,6 +3074,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var historyWindowController: HistoryWindowController?
     var imageGeneratorWindowController: ImageGeneratorWindowController?
     var markdownRendererWindowController: MarkdownRendererWindowController?
+    var mermaidRendererWindowController: MermaidRendererWindowController?
     var currentMode: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -3154,6 +3155,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         menu.addItem(withTitle: "翻译", action: #selector(showTranslationWindow), keyEquivalent: "")
         menu.addItem(withTitle: "转图片", action: #selector(showImageWindow), keyEquivalent: "")
         menu.addItem(withTitle: "Markdown渲染", action: #selector(showMarkdownRendererWindow), keyEquivalent: "")
+        menu.addItem(withTitle: "Mermaid图表", action: #selector(showMermaidRendererWindow), keyEquivalent: "")
         menu.addItem(withTitle: "历史记录", action: #selector(showHistoryWindow), keyEquivalent: "")
         menu.addItem(withTitle: "设置", action: #selector(showSettingsWindow), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
@@ -3269,6 +3271,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             markdownRendererWindowController = MarkdownRendererWindowController()
         }
         markdownRendererWindowController?.showWindow(self)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func showMermaidRendererWindow() {
+        if mermaidRendererWindowController == nil {
+            mermaidRendererWindowController = MermaidRendererWindowController()
+        }
+        mermaidRendererWindowController?.showWindow(self)
         NSApp.activate(ignoringOtherApps: true)
     }
 
