@@ -18,37 +18,6 @@ private class WeakBridge: NSObject, WKScriptMessageHandler {
     }
 }
 
-// SVG 位置消息处理器
-class SVGPositionMessageHandler: NSObject, WKScriptMessageHandler {
-    private let callback: (SVGRect) -> Void
-    
-    struct SVGRect {
-        let x: Double
-        let y: Double
-        let width: Double
-        let height: Double
-    }
-    
-    init(callback: @escaping (SVGRect) -> Void) {
-        self.callback = callback
-        super.init()
-    }
-    
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any],
-              let x = body["x"] as? Double,
-              let y = body["y"] as? Double,
-              let width = body["width"] as? Double,
-              let height = body["height"] as? Double else {
-            print("无效的 SVG 位置消息")
-            return
-        }
-        
-        let svgRect = SVGRect(x: x, y: y, width: width, height: height)
-        callback(svgRect)
-    }
-}
-
 // MARK: - Custom Text View for Mermaid Input
 class MermaidInputTextView: NSTextView {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -83,14 +52,16 @@ class MermaidInputTextView: NSTextView {
 }
 
 // MARK: - Mermaid Renderer Window Controller
-class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate, WKScriptMessageHandler, WKNavigationDelegate {
+class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate {
     private var inputTextView: NSTextView!
     private var previewWebView: WKWebView!
     private var renderButton: NSButton!
     private var fixWithAIButton: NSButton!
     private var copyImageButton: NSButton!
     private var saveImageButton: NSButton!
-
+    private var zoomInButton: NSButton!
+    private var zoomOutButton: NSButton!
+    private var zoomResetButton: NSButton!
     private var scrollView: NSScrollView!
     private var currentMermaidCode: String?
     private var currentZoomLevel: CGFloat = 1.0
@@ -151,7 +122,7 @@ class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate, 
         }
         
         // 清理进度指示器
-        self.hideProgressIndicator()
+        hideProgressIndicator()
         
         print("✅ MermaidRenderer: 资源清理完成")
     }
@@ -316,18 +287,36 @@ class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate, 
     }
     
     private func setupPreviewArea(_ container: NSView) {
-        // 顶部按钮区域
-        let buttonContainer = NSView()
-        container.addSubview(buttonContainer)
+        // 标题和工具栏
+        let titleLabel = NSTextField(labelWithString: "图表预览:")
+        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        container.addSubview(titleLabel)
+        
+        // 工具栏
+        let toolbar = NSView()
+        container.addSubview(toolbar)
+        
+        // 缩放按钮
+        zoomInButton = NSButton(title: "放大", target: self, action: #selector(zoomIn))
+        zoomInButton.bezelStyle = .rounded
+        toolbar.addSubview(zoomInButton)
+        
+        zoomOutButton = NSButton(title: "缩小", target: self, action: #selector(zoomOut))
+        zoomOutButton.bezelStyle = .rounded
+        toolbar.addSubview(zoomOutButton)
+        
+        zoomResetButton = NSButton(title: "重置", target: self, action: #selector(zoomReset))
+        zoomResetButton.bezelStyle = .rounded
+        toolbar.addSubview(zoomResetButton)
         
         // 导出按钮
         copyImageButton = NSButton(title: "复制图片", target: self, action: #selector(copyImage))
         copyImageButton.bezelStyle = .rounded
-        buttonContainer.addSubview(copyImageButton)
+        toolbar.addSubview(copyImageButton)
         
         saveImageButton = NSButton(title: "保存图片", target: self, action: #selector(saveImage))
         saveImageButton.bezelStyle = .rounded
-        buttonContainer.addSubview(saveImageButton)
+        toolbar.addSubview(saveImageButton)
         
         // WebView 配置
         let webViewConfig = WKWebViewConfiguration()
@@ -351,33 +340,50 @@ class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate, 
         setupDragGestures()
         
         // 设置约束
-        buttonContainer.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
         previewWebView.translatesAutoresizingMaskIntoConstraints = false
         dragOverlayView.translatesAutoresizingMaskIntoConstraints = false
-
+        zoomInButton.translatesAutoresizingMaskIntoConstraints = false
+        zoomOutButton.translatesAutoresizingMaskIntoConstraints = false
+        zoomResetButton.translatesAutoresizingMaskIntoConstraints = false
         copyImageButton.translatesAutoresizingMaskIntoConstraints = false
         saveImageButton.translatesAutoresizingMaskIntoConstraints = false
         
         NSLayoutConstraint.activate([
-            // 按钮容器
-            buttonContainer.topAnchor.constraint(equalTo: container.topAnchor, constant: 5),
-            buttonContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            buttonContainer.heightAnchor.constraint(equalToConstant: 25),
-            buttonContainer.widthAnchor.constraint(equalToConstant: 170),
+            // 标题
+            titleLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+            titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
             
-            // 按钮
-            copyImageButton.leadingAnchor.constraint(equalTo: buttonContainer.leadingAnchor),
-            copyImageButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
+            // 工具栏
+            toolbar.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
+            toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+            toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            toolbar.heightAnchor.constraint(equalToConstant: 40),
+            
+            // 工具栏按钮
+            zoomInButton.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
+            zoomInButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            zoomInButton.widthAnchor.constraint(equalToConstant: 60),
+            
+            zoomOutButton.leadingAnchor.constraint(equalTo: zoomInButton.trailingAnchor, constant: 5),
+            zoomOutButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            zoomOutButton.widthAnchor.constraint(equalToConstant: 60),
+            
+            zoomResetButton.leadingAnchor.constraint(equalTo: zoomOutButton.trailingAnchor, constant: 5),
+            zoomResetButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            zoomResetButton.widthAnchor.constraint(equalToConstant: 60),
+            
+            copyImageButton.trailingAnchor.constraint(equalTo: saveImageButton.leadingAnchor, constant: -5),
+            copyImageButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
             copyImageButton.widthAnchor.constraint(equalToConstant: 80),
-            copyImageButton.heightAnchor.constraint(equalToConstant: 25),
             
-            saveImageButton.trailingAnchor.constraint(equalTo: buttonContainer.trailingAnchor),
-            saveImageButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
+            saveImageButton.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
+            saveImageButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
             saveImageButton.widthAnchor.constraint(equalToConstant: 80),
-            saveImageButton.heightAnchor.constraint(equalToConstant: 25),
             
             // WebView
-            previewWebView.topAnchor.constraint(equalTo: buttonContainer.bottomAnchor, constant: 5),
+            previewWebView.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
             previewWebView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
             previewWebView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
             previewWebView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
@@ -538,120 +544,392 @@ graph TD
             return createEmptyHTML()
         }
         
-        // 基于 Mermaid 官方标准的简洁实现
+        // 对 HTML 中的特殊字符进行转义，但保持 Mermaid 代码的原始格式
+        let htmlEscapedCode = safeCode.replacingOccurrences(of: "&", with: "&amp;")
+                                       .replacingOccurrences(of: "<", with: "&lt;")
+                                       .replacingOccurrences(of: ">", with: "&gt;")
+        
+        // 恢复原来的Mermaid.js客户端渲染，但保留Swift拖拽缩放控制
         let html = """
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Mermaid Diagram</title>
     <style>
         body {
             margin: 0;
-            padding: 20px;
-            background: white;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }
-        .mermaid {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: calc(100vh - 40px);
-        }
-        /* 简单的缩放控制 */
-        .zoom-controls {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            display: flex;
-            gap: 10px;
-            z-index: 1000;
-        }
-        .zoom-btn {
-            width: 40px;
-            height: 40px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            background: white;
-            cursor: pointer;
-            font-size: 16px;
+      padding: 0; 
+      background: white; 
+      font-family: Arial, sans-serif; 
+      overflow: hidden;
+    }
+    #mermaid-diagram { 
+      width: 100vw; 
+      height: 100vh; 
             display: flex;
             align-items: center;
-            justify-content: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      justify-content: center;
+      position: relative;
+      overflow: visible;
         }
-        .zoom-btn:hover {
-            background: #f5f5f5;
+    #mermaid-diagram svg { 
+      max-width: none; 
+      max-height: none; 
+      display: block;
+            transform-origin: center center;
         }
     </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
 </head>
 <body>
-    <div class="zoom-controls">
-        <button class="zoom-btn" onclick="zoomIn()">+</button>
-        <button class="zoom-btn" onclick="zoomOut()">−</button>
-        <button class="zoom-btn" onclick="resetZoom()">⌂</button>
+  <div id="mermaid-diagram">
+    \(htmlEscapedCode)
     </div>
     
-    <pre class="mermaid">
-\(safeCode)
-    </pre>
+    <script>
+    window.webkit.messageHandlers.debug.postMessage('🎬 Mermaid.js开始初始化');
     
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-        
-        // 使用 Mermaid 官方推荐配置
+            // 配置Mermaid - 使用接近官方默认的主题
         mermaid.initialize({
-            startOnLoad: true,
-            theme: 'default',
+          startOnLoad: false,
+          theme: 'base',
             securityLevel: 'loose',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          themeVariables: {
+            // 使用更接近官方默认的颜色方案
+            primaryColor: '#fff2cc',
+            primaryTextColor: '#000000',
+            primaryBorderColor: '#d6b656',
+            
+            // 次要节点颜色 - 蓝色系
+            secondaryColor: '#dae8fc', 
+            secondaryTextColor: '#000000',
+            secondaryBorderColor: '#6c8ebf',
+            
+            // 第三级节点颜色 - 绿色系
+            tertiaryColor: '#d5e8d4',
+            tertiaryTextColor: '#000000', 
+            tertiaryBorderColor: '#82b366',
+            
+            // 线条和箭头
+            lineColor: '#000000',
+            arrowheadColor: '#000000',
+            
+            // 背景设置
+            background: '#ffffff',
+            mainBkg: '#fff2cc',
+            secondBkg: '#dae8fc', 
+            tertiaryBkg: '#d5e8d4',
+            
+            // 文字颜色
+            textColor: '#000000',
+            
+            // 节点相关
+            nodeBkg: '#fff2cc',
+            nodeBorder: '#d6b656',
+            
+            // 集群/子图背景
+            clusterBkg: '#ffffff',
+            clusterBorder: '#000000',
+            
+            // 流程图特定颜色
+            cScale0: '#fff2cc',
+            cScale1: '#dae8fc',
+            cScale2: '#d5e8d4'
+          }
         });
+    
+    // 等待DOM准备就绪后渲染
+    function renderMermaid() {
+      const element = document.getElementById('mermaid-diagram');
+      if (!element) {
+        window.webkit.messageHandlers.debug.postMessage('❌ 找不到mermaid-diagram元素');
+        return;
+      }
+      
+      window.webkit.messageHandlers.debug.postMessage('🔄 开始渲染Mermaid图表');
+      
+      mermaid.init(undefined, element).then(() => {
+        window.webkit.messageHandlers.debug.postMessage('✅ Mermaid渲染完成');
         
-        // 缩放功能（拖拽由 Swift 端处理）
-        let currentScale = 1;
-        
-        window.zoomIn = function() {
-            currentScale *= 1.2;
-            // 通知 Swift 端更新缩放
-            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.debug) {
-                window.webkit.messageHandlers.debug.postMessage('🔍 JavaScript 缩放: ' + currentScale);
-            }
-        };
-        
-        window.zoomOut = function() {
-            currentScale /= 1.2;
-            // 通知 Swift 端更新缩放
-            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.debug) {
-                window.webkit.messageHandlers.debug.postMessage('🔍 JavaScript 缩放: ' + currentScale);
-            }
-        };
-        
-        window.resetZoom = function() {
-            currentScale = 1;
-            // 通知 Swift 端重置
-            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.debug) {
-                window.webkit.messageHandlers.debug.postMessage('🔄 JavaScript 重置缩放');
-            }
-        };
-        
-        // 拖拽功能由 Swift 端处理，通过 window.applyTransform 函数接收指令
-        
-        // Swift 控制的变换函数 - 接收来自 Swift 端的拖拽和缩放指令
-        window.applyTransform = function(translateX, translateY, scale) {
-            const diagram = document.querySelector('.mermaid svg');
-            if (diagram) {
-                diagram.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
-                diagram.style.transformOrigin = 'center';
-                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.debug) {
-                    window.webkit.messageHandlers.debug.postMessage('🔄 应用变换: translate(' + translateX + ', ' + translateY + ') scale(' + scale + ')');
+        // 查找生成的SVG并设置ID和修复样式
+        const svg = element.querySelector('svg');
+        if (svg) {
+          svg.id = 'mermaid-svg';
+          svg.style.transformOrigin = 'center center';
+          
+          // 智能美化SVG样式：基于元素类型和上下文选择合适颜色
+          window.webkit.messageHandlers.debug.postMessage('🎨 开始处理SVG样式');
+          
+          svg.querySelectorAll('*').forEach(el => {
+            // 分析元素类型和上下文
+            const isStartEnd = el.closest('.start') || el.closest('.end') || 
+                              (el.textContent && (el.textContent.includes('开始') || el.textContent.includes('结束')));
+            const isDecision = el.closest('.decision') || el.tagName === 'polygon' ||
+                              (el.textContent && (el.textContent.includes('?') || el.textContent.includes('是否')));
+            const isProcess = el.closest('.process') || el.tagName === 'rect';
+            const isArrow = el.classList.contains('arrowhead') || el.getAttribute('marker-end') || 
+                           (el.tagName === 'path' && el.getAttribute('d') && el.getAttribute('d').includes('M'));
+            const isText = el.tagName === 'text' || el.tagName === 'tspan';
+            // 更准确的数据库识别：圆柱形通常是多个路径组合
+            const parentG = el.closest('g');
+            const isDatabase = (el.tagName === 'path' && el.getAttribute('d') && 
+                              (el.getAttribute('d').includes('ellipse') || 
+                               (el.getAttribute('d').includes('A') && el.getAttribute('d').includes('Z')))) ||
+                              el.closest('g[class*="cluster"]') || 
+                              (parentG && parentG.querySelector('ellipse'));
+            
+            // 修复所有黑色问题，包括已有的黑色填充
+            const currentFill = el.getAttribute('fill');
+            const currentStroke = el.getAttribute('stroke');
+            
+            // 处理黑色填充或没有填充的可见元素
+            if (currentFill === 'black' || currentFill === '#000000' || currentFill === '#000' || 
+                (!currentFill && (el.tagName === 'rect' || el.tagName === 'circle' || el.tagName === 'ellipse' || 
+                                 el.tagName === 'polygon' || (el.tagName === 'path' && !isArrow)))) {
+              window.webkit.messageHandlers.debug.postMessage('🖖️ 处理元素: ' + el.tagName + ' fill=' + (currentFill || 'none'));
+              
+              if (isText) {
+                // 文字：设置深色
+                el.setAttribute('fill', '#2c3e50');
+              } else if (el.tagName === 'path' && !isArrow) {
+                // 数据库圆柱等复杂形状：设置为浅灰色
+                window.webkit.messageHandlers.debug.postMessage('🗄️ 处理Path元素: d=' + (el.getAttribute('d') || '').substring(0, 50));
+                el.setAttribute('fill', '#e0e0e0');
+                el.style.fill = '#e0e0e0'; // 强制设置style属性
+                if (!currentStroke) {
+                  el.setAttribute('stroke', '#757575');
+                  el.setAttribute('stroke-width', '2px');
                 }
+              } else if (el.tagName === 'rect') {
+                // 矩形节点：蓝色
+                el.setAttribute('fill', '#f3f9ff');
+                if (!currentStroke) {
+                  el.setAttribute('stroke', '#2196f3');
+                  el.setAttribute('stroke-width', '2px');
+                }
+              } else if (el.tagName === 'polygon') {
+                // 决策节点：黄色
+                el.setAttribute('fill', '#fff8e1');
+                if (!currentStroke) {
+                  el.setAttribute('stroke', '#ff9800');
+                  el.setAttribute('stroke-width', '2px');
+                }
+              } else if (el.tagName === 'circle' || el.tagName === 'ellipse') {
+                // 圆形节点：绿色
+                el.setAttribute('fill', '#e8f5e8');
+                if (!currentStroke) {
+                  el.setAttribute('stroke', '#4caf50');
+                  el.setAttribute('stroke-width', '2px');
+                }
+              } else {
+                // 其他：浅灰色
+                el.setAttribute('fill', '#f5f5f5');
+                if (!currentStroke) {
+                  el.setAttribute('stroke', '#616161');
+                  el.setAttribute('stroke-width', '1.5px');
+                }
+              }
             }
-        };
-        
-        // 调试信息
-        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.debug) {
-            window.webkit.messageHandlers.debug.postMessage('✅ Mermaid 使用官方标准实现渲染完成，Swift 拖拽功能已连接');
+            
+            // 处理黑色描边
+            if (currentStroke === 'black' || currentStroke === '#000000' || currentStroke === '#000') {
+              window.webkit.messageHandlers.debug.postMessage('🖖️ 处理黑色描边: ' + el.tagName);
+              el.setAttribute('stroke', '#616161');
+            }
+            
+            // 优化线条和箭头样式
+            if (el.tagName === 'path' || el.tagName === 'line' || el.tagName === 'polyline') {
+              if (!el.hasAttribute('stroke') || el.getAttribute('stroke') === 'black' || el.getAttribute('stroke') === '#000000') {
+                el.setAttribute('stroke', '#5d6d7e'); // 优雅的蓝灰色
+                el.setAttribute('stroke-width', '1.8px');
+                el.setAttribute('stroke-linecap', 'round');
+                el.setAttribute('stroke-linejoin', 'round');
+              }
+              
+              // 特殊处理箭头
+              if (isArrow || el.getAttribute('marker-end')) {
+                el.setAttribute('stroke', '#34495e');
+                el.setAttribute('stroke-width', '2px');
+                el.style.filter = 'drop-shadow(0 1px 2px rgba(0,0,0,0.1))';
+              }
+            }
+            
+            // 箭头标记优化
+            if (el.tagName === 'marker' || el.closest('marker')) {
+              el.setAttribute('fill', '#34495e');
+            }
+            
+            // 为主要形状添加微妙阴影
+            if ((el.tagName === 'rect' || el.tagName === 'circle' || el.tagName === 'ellipse' || el.tagName === 'polygon') && 
+                !isArrow && el.getAttribute('fill') && el.getAttribute('fill') !== 'none') {
+              el.style.filter = 'drop-shadow(0 1px 3px rgba(0,0,0,0.08))';
+            }
+          });
+          
+          // 处理文字元素 - 确保文字不被边框挡住
+          const allTextElements = svg.querySelectorAll('text, tspan, foreignObject');
+          window.webkit.messageHandlers.debug.postMessage('📝 找到 ' + allTextElements.length + ' 个文字元素');
+          
+          allTextElements.forEach((textEl, index) => {
+            window.webkit.messageHandlers.debug.postMessage('📝 处理文字[' + index + ']: ' + textEl.tagName + ' 内容=' + (textEl.textContent || '').substring(0, 20));
+            
+            // 确保文字有正确的颜色
+            if (!textEl.getAttribute('fill') || textEl.getAttribute('fill') === 'black' || textEl.getAttribute('fill') === '#000000') {
+              textEl.setAttribute('fill', '#2c3e50');
+              textEl.style.fill = '#2c3e50'; // 强制设置style
+            }
+            
+            // 确保文字在最上层，不添加背景
+            if (textEl.tagName === 'text' || textEl.tagName === 'foreignObject') {
+              textEl.style.zIndex = '1000';
+              textEl.style.pointerEvents = 'none';
+              
+              if (textEl.tagName === 'text') {
+                textEl.style.dominantBaseline = 'central';
+                textEl.style.textAnchor = 'middle';
+              }
+              
+              window.webkit.messageHandlers.debug.postMessage('📝 文字处理完成，无背景: ' + (textEl.textContent || '').substring(0, 10));
+            }
+          });
+          
+          // 专门处理所有图形的文字框大小不够的问题
+          const allGroups = svg.querySelectorAll('g');
+          allGroups.forEach(group => {
+            const textEl = group.querySelector('foreignObject');
+            const rectEl = group.querySelector('rect');
+            const polygonEl = group.querySelector('polygon');
+            const circleEl = group.querySelector('circle');
+            const ellipseEl = group.querySelector('ellipse');
+            const pathEl = group.querySelector('path');
+            
+            if (textEl && textEl.textContent) {
+              const textContent = textEl.textContent.trim();
+              if (textContent.length > 0) {
+                const textLength = textContent.length;
+                const currentWidth = parseFloat(textEl.getAttribute('width') || '0');
+                const currentHeight = parseFloat(textEl.getAttribute('height') || '0');
+                const minWidth = textLength * 12 + 20; // 每字符12px + 边距
+                const minHeight = Math.max(24, currentHeight); // 确保足够高度
+                
+                let shapeType = '';
+                if (polygonEl) shapeType = '多边形';
+                else if (rectEl) shapeType = '矩形';
+                else if (circleEl || ellipseEl) shapeType = '圆形';
+                else if (pathEl) shapeType = '路径';
+                else shapeType = '未知';
+                
+                window.webkit.messageHandlers.debug.postMessage('📏 ' + shapeType + '文字框: "' + textContent + '" 当前=' + currentWidth + 'x' + currentHeight + ' 需要=' + minWidth + 'x' + minHeight);
+                
+                let needsUpdate = false;
+                
+                // 检查宽度
+                if (minWidth > currentWidth) {
+                  textEl.setAttribute('width', minWidth.toString());
+                  
+                  // 调整x位置保持文字居中
+                  const currentX = parseFloat(textEl.getAttribute('x') || '0');
+                  const newX = currentX - (minWidth - currentWidth) / 2;
+                  textEl.setAttribute('x', newX.toString());
+                  
+                  needsUpdate = true;
+                }
+                
+                // 检查高度
+                if (minHeight > currentHeight) {
+                  textEl.setAttribute('height', minHeight.toString());
+                  
+                  // 调整y位置保持文字居中
+                  const currentY = parseFloat(textEl.getAttribute('y') || '0');
+                  const newY = currentY - (minHeight - currentHeight) / 2;
+                  textEl.setAttribute('y', newY.toString());
+                  
+                  needsUpdate = true;
+                }
+                
+                if (needsUpdate) {
+                  // 确保文字居中显示
+                  const divEl = textEl.querySelector('div');
+                  if (divEl) {
+                    divEl.style.textAlign = 'center';
+                    divEl.style.lineHeight = minHeight + 'px';
+                    divEl.style.height = minHeight + 'px';
+                    divEl.style.display = 'flex';
+                    divEl.style.alignItems = 'center';
+                    divEl.style.justifyContent = 'center';
+                    divEl.style.overflow = 'visible';
+                  }
+                  
+                  window.webkit.messageHandlers.debug.postMessage('📏 ' + shapeType + '文字框已调整: ' + currentWidth + 'x' + currentHeight + ' -> ' + minWidth + 'x' + minHeight);
+                }
+              }
+            }
+          });
+          
+          // 专门处理圆柱形数据库（可能是特殊组合）
+          const allElements = svg.querySelectorAll('*');
+          let databaseElements = [];
+          
+          allElements.forEach(el => {
+            // 查找可能的数据库元素
+            const computedFill = window.getComputedStyle(el).fill;
+            const computedStroke = window.getComputedStyle(el).stroke;
+            
+            if ((computedFill === 'rgb(0, 0, 0)' || computedFill === 'black') && 
+                (el.tagName === 'path' || el.tagName === 'ellipse' || el.tagName === 'rect')) {
+              databaseElements.push(el);
+              window.webkit.messageHandlers.debug.postMessage('🗄️ 处理黑色圆柱: ' + el.tagName + ' fill=' + computedFill);
+              
+              // 多种方式强制覆盖圆柱颜色
+              el.setAttribute('fill', '#e0e0e0');
+              el.style.fill = '#e0e0e0';
+              el.style.setProperty('fill', '#e0e0e0', 'important');
+              
+              el.setAttribute('stroke', '#757575');
+              el.style.stroke = '#757575';
+              el.style.setProperty('stroke', '#757575', 'important');
+              
+              el.setAttribute('stroke-width', '2px');
+              el.style.strokeWidth = '2px';
+              el.style.setProperty('stroke-width', '2px', 'important');
+              
+              window.webkit.messageHandlers.debug.postMessage('🗄️ 圆柱颜色已强制设置为浅灰色');
+            }
+          });
+          
+          // 统计处理结果
+          const textElements = svg.querySelectorAll('text, tspan, foreignObject');
+          const blackFillElements = svg.querySelectorAll('[fill="black"], [fill="#000000"], [fill="#000"]');
+          const blackStrokeElements = svg.querySelectorAll('[stroke="black"], [stroke="#000000"], [stroke="#000"]');
+          const allPaths = svg.querySelectorAll('path');
+          
+          window.webkit.messageHandlers.debug.postMessage('✅ SVG处理统计:');
+          window.webkit.messageHandlers.debug.postMessage('  - ' + textElements.length + '个文字元素');
+          window.webkit.messageHandlers.debug.postMessage('  - ' + blackFillElements.length + '个黑色填充元素');
+          window.webkit.messageHandlers.debug.postMessage('  - ' + blackStrokeElements.length + '个黑色描边元素');
+          window.webkit.messageHandlers.debug.postMessage('  - ' + allPaths.length + '个路径元素');
+          window.webkit.messageHandlers.debug.postMessage('  - ' + databaseElements.length + '个数据库元素(计算样式黑色)');
+        }
+      }).catch(error => {
+        window.webkit.messageHandlers.debug.postMessage('❌ Mermaid渲染失败: ' + error);
+      });
+    }
+    
+    // Swift控制的变换函数
+    window.applyTransform = function(translateX, translateY, scale) {
+      const svg = document.getElementById('mermaid-svg');
+      if (svg) {
+        svg.style.transform = 'translate(' + translateX + 'px, ' + translateY + 'px) scale(' + scale + ')';
+        window.webkit.messageHandlers.debug.postMessage('🔄 应用变换: translate(' + translateX + ', ' + translateY + ') scale(' + scale + ')');
+      }
+    };
+    
+    // 等待DOM加载完成后渲染
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', renderMermaid);
+    } else {
+      renderMermaid();
         }
     </script>
 </body>
@@ -992,7 +1270,25 @@ graph TD
          print("🚀 MermaidRenderer: 网络任务已启动")
     }
     
-
+    // MARK: - 缩放控制
+    @objc private func zoomIn() {
+        currentScale = min(currentScale * 1.2, 5.0)
+        applyTransform()
+        print("🔍 按钮放大到: \(currentScale)")
+    }
+    
+    @objc private func zoomOut() {
+        currentScale = max(currentScale / 1.2, 0.1)
+        applyTransform()
+        print("🔍 按钮缩小到: \(currentScale)")
+    }
+    
+    @objc private func zoomReset() {
+        currentScale = 1.0
+        currentTranslation = NSPoint.zero
+        applyTransform()
+        print("🔄 重置视图")
+    }
     
 
     
@@ -1043,172 +1339,12 @@ graph TD
     }
     
     private func captureWebViewAsImage(completion: @escaping (NSImage?) -> Void) {
-        // 获取 SVG 元素的位置和尺寸，并确保它在可视范围内
-        let script = """
-            (function() {
-                const svg = document.querySelector('.mermaid svg');
-                if (!svg) {
-                    return null;
-                }
-                
-                // 获取 SVG 的边界框
-                const rect = svg.getBoundingClientRect();
-                const webViewRect = document.documentElement.getBoundingClientRect();
-                
-                // 计算 SVG 相对于文档的位置
-                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-                const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
-                
-                const svgAbsoluteTop = rect.top + scrollTop;
-                const svgAbsoluteLeft = rect.left + scrollLeft;
-                
-                // 检查 SVG 是否完全在可视范围内（包含边距）
-                const viewportWidth = window.innerWidth;
-                const viewportHeight = window.innerHeight;
-                const margin = 50; // 50px 边距
-                
-                const isFullyVisible = rect.left >= margin && 
-                                     rect.top >= margin && 
-                                     rect.right <= (viewportWidth - margin) && 
-                                     rect.bottom <= (viewportHeight - margin);
-                
-                return {
-                    x: rect.left,
-                    y: rect.top,
-                    width: rect.width,
-                    height: rect.height,
-                    webViewWidth: webViewRect.width,
-                    webViewHeight: webViewRect.height,
-                    absoluteTop: svgAbsoluteTop,
-                    absoluteLeft: svgAbsoluteLeft,
-                    currentScrollTop: scrollTop,
-                    currentScrollLeft: scrollLeft,
-                    isFullyVisible: isFullyVisible,
-                    viewportWidth: viewportWidth,
-                    viewportHeight: viewportHeight
-                };
-            })()
-        """
-        
-        previewWebView.evaluateJavaScript(script) { [weak self] result, error in
-            guard let self = self else { return }
-            
-            if let error = error {
-                print("获取 SVG 位置失败: \(error)")
-                self.fallbackToFullScreenshot(completion: completion)
-                return
-            }
-            
-            guard let rectData = result as? [String: Any],
-                  let x = rectData["x"] as? Double,
-                  let y = rectData["y"] as? Double,
-                  let width = rectData["width"] as? Double,
-                  let height = rectData["height"] as? Double,
-                  let isFullyVisible = rectData["isFullyVisible"] as? Bool,
-                  width > 0, height > 0 else {
-                print("无法获取有效的 SVG 尺寸，使用全屏截图")
-                self.fallbackToFullScreenshot(completion: completion)
-                return
-            }
-            
-            if !isFullyVisible {
-                print("⚠️ SVG 不完全可见，需要调整视图位置")
-                self.ensureSVGVisibleAndCapture(rectData: rectData, completion: completion)
-            } else {
-                print("✅ SVG 完全可见，直接截图")
-                self.captureSVGDirectly(x: x, y: y, width: width, height: height, completion: completion)
-            }
-        }
-    }
-    
-    private func ensureSVGVisibleAndCapture(rectData: [String: Any], completion: @escaping (NSImage?) -> Void) {
-        guard let absoluteTop = rectData["absoluteTop"] as? Double,
-              let absoluteLeft = rectData["absoluteLeft"] as? Double,
-              let width = rectData["width"] as? Double,
-              let height = rectData["height"] as? Double,
-              let viewportWidth = rectData["viewportWidth"] as? Double,
-              let viewportHeight = rectData["viewportHeight"] as? Double else {
-            print("无法获取滚动信息，使用全屏截图")
-            fallbackToFullScreenshot(completion: completion)
-            return
-        }
-        
-        // 计算需要滚动到的位置，确保 SVG 完全可见且有足够边距
-        let margin: Double = 50.0  // 添加 50px 边距确保完全可见
-        let targetScrollTop = max(0, absoluteTop - margin)
-        let targetScrollLeft = max(0, absoluteLeft - margin)
-        
-        let scrollScript = """
-            window.scrollTo(\(targetScrollLeft), \(targetScrollTop));
-            
-            // 等待滚动完成后重新获取 SVG 位置
-            setTimeout(function() {
-                const svg = document.querySelector('.mermaid svg');
-                if (svg) {
-                    const rect = svg.getBoundingClientRect();
-                    window.webkit.messageHandlers.svgPosition.postMessage({
-                        x: rect.left,
-                        y: rect.top,
-                        width: rect.width,
-                        height: rect.height
-                    });
-                }
-            }, 100);
-        """
-        
-        print("🔄 滚动到位置: left=\(targetScrollLeft), top=\(targetScrollTop)")
-        
-        // 添加临时消息处理器
-        let messageHandler = SVGPositionMessageHandler { [weak self] svgRect in
-            guard let self = self else { return }
-            self.captureSVGDirectly(x: svgRect.x, y: svgRect.y, width: svgRect.width, height: svgRect.height, completion: completion)
-        }
-        
-        previewWebView.configuration.userContentController.add(messageHandler, name: "svgPosition")
-        
-        previewWebView.evaluateJavaScript(scrollScript) { [weak self] _, error in
-            if let error = error {
-                print("滚动失败: \(error)")
-                self?.fallbackToFullScreenshot(completion: completion)
-            }
-            
-            // 清理消息处理器
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                self?.previewWebView.configuration.userContentController.removeScriptMessageHandler(forName: "svgPosition")
-            }
-        }
-    }
-    
-    private func captureSVGDirectly(x: Double, y: Double, width: Double, height: Double, completion: @escaping (NSImage?) -> Void) {
-        let config = WKSnapshotConfiguration()
-        let svgRect = CGRect(x: x, y: y, width: width, height: height)
-        config.rect = svgRect
-        
-        print("📸 截取 SVG 区域: x=\(x), y=\(y), width=\(width), height=\(height)")
-        
-        previewWebView.takeSnapshot(with: config) { image, error in
-            if let error = error {
-                print("SVG 截图失败: \(error)，尝试全屏截图")
-                self.fallbackToFullScreenshot(completion: completion)
-            } else if let image = image {
-                print("✅ SVG 截图成功，尺寸: \(image.size)")
-                completion(image)
-            } else {
-                print("SVG 截图返回 nil，尝试全屏截图")
-                self.fallbackToFullScreenshot(completion: completion)
-            }
-        }
-    }
-    
-    private func fallbackToFullScreenshot(completion: @escaping (NSImage?) -> Void) {
-        print("🔄 使用全屏截图作为备用方案")
         let config = WKSnapshotConfiguration()
         previewWebView.takeSnapshot(with: config) { image, error in
             if let error = error {
-                print("全屏截图失败: \(error)")
+                print("截图失败: \(error)")
                 completion(nil)
             } else {
-                print("✅ 全屏截图成功")
                 completion(image)
             }
         }
@@ -1228,7 +1364,7 @@ graph TD
 }
 
 // MARK: - WKNavigationDelegate
-extension MermaidRendererWindowController {
+extension MermaidRendererWindowController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         print("✅ MermaidRenderer: WebView页面加载完成")
     }
@@ -1275,7 +1411,7 @@ extension MermaidRendererWindowController {
 }
 
 // MARK: - WebView Debug Bridge
-extension MermaidRendererWindowController {
+extension MermaidRendererWindowController: WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "debug" {
             print("[WebView] debug: \(message.body)")
