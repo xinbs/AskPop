@@ -109,6 +109,10 @@ class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate, 
     private var isProgressVisible: Bool = false
     private var currentAITask: URLSessionDataTask?
     
+    // 状态保持相关
+    private var lastMermaidCode: String?
+    private var isFirstShow: Bool = true
+    
     override init(window: NSWindow?) {
         super.init(window: window)
         setupWindow()
@@ -140,19 +144,22 @@ class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate, 
     deinit {
         print("🗑️ MermaidRenderer: 正在清理资源")
         
-        // 取消正在进行的网络请求
+        // 移除通知监听
+        NotificationCenter.default.removeObserver(self)
+        
+        // 取消正在进行的AI任务
         currentAITask?.cancel()
         currentAITask = nil
         
-        // 清理WebView委托，避免悬空指针
+        // 清理WebView
         if let webView = previewWebView {
             webView.navigationDelegate = nil
             webView.stopLoading()
         }
         
-        // 清理进度指示器
+        // 隐藏进度指示器
         self.hideProgressIndicator()
-        
+
         print("✅ MermaidRenderer: 资源清理完成")
     }
     
@@ -162,7 +169,14 @@ class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate, 
         // 确保文本视图可以接收焦点
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.window?.makeFirstResponder(self.inputTextView)
-            self.loadExampleMermaidCode()
+            
+            // 只在首次显示时加载示例代码，否则恢复上次的内容
+            if self.isFirstShow {
+                self.loadExampleMermaidCode()
+                self.isFirstShow = false
+            } else if let lastCode = self.lastMermaidCode {
+                self.inputTextView.string = lastCode
+            }
         }
     }
     
@@ -250,6 +264,14 @@ class MermaidRendererWindowController: NSWindowController, NSSplitViewDelegate, 
         
         // 设置默认文本内容
         inputTextView.string = ""
+        
+        // 添加文本变化监听
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(textDidChange(_:)),
+            name: NSText.didChangeNotification,
+            object: inputTextView
+        )
         
         // 将文本视图设置为滚动视图的文档视图
         scrollView.documentView = inputTextView
@@ -509,6 +531,8 @@ graph TD
         
         print("✅ MermaidRenderer: 开始渲染，代码长度: \(mermaidCode.count)")
         currentMermaidCode = mermaidCode
+        // 保存当前输入的代码
+        lastMermaidCode = mermaidCode
         renderMermaidInWebView(mermaidCode)
     }
     
@@ -1219,6 +1243,18 @@ graph TD
         let displayMessage = (icon != nil) ? "\(icon!) \(message)" : message
         print("📢 状态消息: \(displayMessage)")
         // 完全移除UI状态显示，只保留控制台输出以避免崩溃
+    }
+    
+    // MARK: - 文本变化监听
+    @objc private func textDidChange(_ notification: Notification) {
+        guard let textView = notification.object as? NSTextView,
+              textView == inputTextView else { return }
+        
+        // 实时保存用户输入的内容
+        let currentText = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !currentText.isEmpty {
+            lastMermaidCode = currentText
+        }
     }
     
     // MARK: - WKScriptMessageHandler (已禁用以避免循环引用)
