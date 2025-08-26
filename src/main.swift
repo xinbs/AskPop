@@ -84,7 +84,8 @@ class EditableTextField: NSTextField {
         
         // 设置基本属性
         if let cell = self.cell as? VerticallycenteredTextFieldCell {
-            cell.stringValue = self.stringValue
+            // 不要复制可能存在默认值的stringValue，保持为空
+            cell.stringValue = ""
             cell.placeholderString = self.placeholderString
             cell.font = self.font
             cell.alignment = self.alignment
