@@ -4551,7 +4551,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let aggregator = ResponseAggregator()
         
         // 检查是否是笔记模式
-        let isNoteMode = ProcessInfo.processInfo.environment["POPCLIP_ACTION_IDENTIFIER"] == "note_action"
+        let isNoteMode = self.currentMode == "note"
         
         // 如果是笔记模式，获取笔记窗口控制器
         let noteWindowController = isNoteMode ? await MainActor.run {
