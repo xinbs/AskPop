@@ -99,4 +99,26 @@ const grammar = {
     }
 };
 
-exports.actions = [rewrite, grammar];
+const markdown = {
+    title: "Markdown",
+    icon: "symbol:m.square",
+    code: async (input, options) => {
+        try {
+            const response = await callAPI(
+                0.7,
+                input,
+                options,
+                "你是一个专业的笔记助手。请帮我将以下文本整理成Markdown格式的笔记，要求:\n1. 根据内容生成合适的标题，默认作为二级标题\n2. 优化文本格式和结构\n3. 添加适当的Markdown语法\n4. 保持原文的关键信息\n请直接返回处理后的Markdown内容，文本开头不用添加```markdown 标记，不要添加任何其他解释。"
+            );
+            popclip.pasteText(response);
+            popclip.showText('Markdown 整理完成');
+            return null;
+        } catch (error) {
+            console.error('Markdown 整理功能出错:', error);
+            popclip.showText('错误: ' + error.message);
+            throw error;
+        }
+    }
+};
+
+exports.actions = [rewrite, grammar, markdown];
